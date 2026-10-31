@@ -1,6 +1,4 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 :root {
   --background: 40 33% 98%;
@@ -17,6 +15,67 @@
   --ink-2: hsl(20 14% 45%);
   --stem: hsl(161 91% 30%);
   --rule: hsl(40 33% 88%);
+  --loss: hsl(0 72% 51%);
+  --loss-bg: hsl(0 72% 96%);
+  --copper: hsl(28 80% 52%);
 }
 
 body { background: var(--paper); color: var(--ink); }
+
+/* pepy design system */
+.pepy-heading-lg {
+  font-size: clamp(28px, 3.5vw, 40px);
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.pepy-heading-md {
+  font-size: clamp(20px, 2.5vw, 28px);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.pepy-subtitle {
+  font-style: italic;
+  font-size: clamp(18px, 2vw, 22px);
+  line-height: 1.35;
+  color: var(--ink-2);
+}
+.pepy-body-serif {
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.pepy-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  color: var(--ink-2);
+}
+.pepy-value {
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink);
+}
+.pepy-section-divider {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: 2rem 0;
+}
+.pepy-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 0.375rem;
+  background: var(--stem);
+  color: white;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 0.375rem 0.75rem;
+  transition: opacity 0.15s;
+}
+.pepy-btn-primary:hover { opacity: 0.9; }
+.pepy-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }

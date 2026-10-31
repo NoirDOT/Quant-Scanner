@@ -102,9 +102,9 @@ export async function readCsvCandles(
   for (const suffix of TF_TO_SUFFIXES[tf]) {
     const filePath = path.join(CSV_DIR, `${csvSymbol}${suffix}`);
     try {
-      const stat = await fs.stat(filePath);
+      const stat = await fs.stat(/*turbopackIgnore: true*/ filePath);
       if (!stat.isFile() || stat.size === 0) continue;
-      const raw = await fs.readFile(filePath, "utf-8");
+      const raw = await fs.readFile(/*turbopackIgnore: true*/ filePath, "utf-8");
       const lines = raw.trim().split("\n");
       if (lines.length === 0) continue;
 
@@ -174,7 +174,7 @@ export async function hasCsvData(yahooSymbol: string, tf: Timeframe): Promise<bo
 export async function listCsvFiles(): Promise<{ symbol: string; tf: string; bars: number; start: string; end: string; sizeBytes: number }[]> {
   const out: any[] = [];
   try {
-    const files = await fs.readdir(CSV_DIR);
+    const files = await fs.readdir(/*turbopackIgnore: true*/ CSV_DIR);
     for (const file of files) {
       if (!file.endsWith(".csv")) continue;
       const match = file.match(/^(.+)_(\w+)\.csv$/);
@@ -184,7 +184,7 @@ export async function listCsvFiles(): Promise<{ symbol: string; tf: string; bars
       const tfMap: Record<string, Timeframe> = { h1: "1h", h2: "2h", h4: "4h", d1: "1d", w1: "1w" };
       const tf = tfMap[tfLower] || tfLower;
       const filePath = path.join(CSV_DIR, file);
-      const stat = await fs.stat(filePath);
+      const stat = await fs.stat(/*turbopackIgnore: true*/ filePath);
       const candles = await readCsvCandles(symbol, tf as Timeframe);
       if (candles.length === 0) continue;
       out.push({
