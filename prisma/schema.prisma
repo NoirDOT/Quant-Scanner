@@ -1,0 +1,1523 @@
+// Prisma schema — Frontend onspace (Next.js 16)
+// Combines scaffold models + Trading Journal (EdgeLog) models
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Scaffold models (kept for compatibility) ───────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Post {
+  id        String   @id @default(cuid())
+  title     String
+  content   String?
+  published Boolean  @default(false)
+  authorId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Trading Journal (EdgeLog) models ───────────────────────────────────
+// Ported from Trading Journal project — institutional-grade trade journal
+// inspired by TradeZella and GoatFunded's MTJ
+
+model Trade {
+  id           String   @id @default(cuid())
+  ticket       Int      @unique
+  symbol       String
+  direction    String   // "buy" | "sell"
+  lots         Float
+  openPrice    Float
+  closePrice   Float?
+  sl           Float?
+  tp           Float?
+  profit       Float?
+  commission   Float    @default(0)
+  swap         Float    @default(0)
+  netProfit    Float?
+  rMultiple    Float?   // risk-adjusted return (profit / risk)
+  openTime     DateTime
+  closeTime    DateTime?
+  status       String   @default("closed") // "open" | "closed"
+  session      String?  // "London" | "New York" | "Asia" | "Sydney"
+  // Journal fields
+  notes        String?
+  setup        String?
+  playbookId   String?
+  playbook     Playbook? @relation(fields: [playbookId], references: [id])
+  emotion      String?
+  mistakes     String?
+  rating       Int?     // 1-5
+  tags         TradeTag[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([symbol])
+  @@index([openTime])
+  @@index([closeTime])
+  @@index([status])
+  @@index([playbookId])
+}
+
+model TradeTag {
+  id       String @id @default(cuid())
+  tradeId  String
+  trade    Trade  @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  tag      String
+
+  @@index([tradeId])
+  @@index([tag])
+}
+
+model Playbook {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  rules       String?  // structured checklist as text
+  category    String?  // "ICT" | "SMC" | "Breakout" | "Reversal" | etc.
+  color       String   @default("#00e5a0")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  trades      Trade[]
+}
+
+model Note {
+  id         String   @id @default(cuid())
+  title      String
+  content    String
+  noteType   String   @default("general") // "pre-market" | "eod" | "weekly" | "general"
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model AiSession {
+  id         String   @id @default(cuid())
+  question   String
+  answer     String
+  createdAt  DateTime @default(now())
+}
+
+// ─── Quant Mind (ICT Trading Agent — quant_brain.py port) ───────────────
+// Live port of the Python quant_brain.py crawler. Articles are fetched via
+// RSS (rss-parser) or HTTP scraping (cheerio), scored for relevance, and
+// persisted here. Trading Ideas are extracted via the LLM (z-ai-web-dev-sdk)
+// and also persisted. QmSeenUrl provides cross-run URL deduplication.
+
+model QmArticle {
+  url                 String   @id
+  title               String
+  author              String?
+  publishedDate       String?
+  sourceType          String   // "substack" | "blog" | "aggregator" | "research" | "data" | "tools" | "other"
+  sourceName          String
+  contentText         String
+  wordCount           Int
+  fetchedAt           DateTime @default(now())
+  relevanceScore      Float
+  extractedIdeasCount Int      @default(0)
+
+  // ─── Typed-knowledge fields (quant-mind integration) ───────────────────
+  asOf                DateTime?
+  availableAt         DateTime?
+  contentHash         String?
+  sourceRefJson       String?
+
+  @@index([sourceName])
+  @@index([fetchedAt])
+  @@index([asOf])
+  @@map("qm_articles")
+}
+
+model QmIdea {
+  id                  String   @id
+  title               String
+  description         String
+  ideaType            String   // IdeaType union
+  sourceUrl           String
+  sourceTitle         String
+  confidence          Float
+  complexity          String   // "low" | "medium" | "high"
+  timeHorizon         String   // "intraday" | "swing" | "position"
+  assetClasses        String   // JSON array of AssetClass
+  keyIndicators       String   // JSON array of strings
+  entryConditions     String   // JSON array of strings
+  exitConditions      String   // JSON array of strings
+  riskConsiderations  String   // JSON array of strings
+  backtestStatus      String   @default("not_tested")
+  tags                String   // JSON array of strings
+  createdAt           DateTime @default(now())
+  notes               String   @default("")
+  // Look-ahead-protection timestamp: when this idea's source article was
+  // actually published (NOT when we crawled it). Persisted alongside the
+  // idea so any downstream backtest/paper-trader can be properly fenced
+  // to data available strictly BEFORE asOf. Sample JSONs ship with asOf
+  // set; live ideas get asOf from the source article's published_date.
+  asOf                 DateTime?
+  // JSON array of { role: "user"|"assistant"; content: string; createdAt: number;
+  // context?: { latestBacktestId?: string; latestBacktestVerdict?: string } }.
+  // Conversation layer on top of ideas (mirrors QmAiBriefing.followupsJson).
+  // Nullable so existing rows don't need a default.
+  followupsJson       String?
+
+  @@index([ideaType])
+  @@index([confidence])
+  @@index([backtestStatus])
+  @@index([createdAt])
+  @@map("qm_ideas")
+}
+
+// Backtest results for QmIdea. One idea can have many backtest runs
+// (re-runs after tweaking params / data range). The latest run wins
+// for display; history is retained for the learning loop.
+model QmIdeaBacktest {
+  id              String   @id @default(cuid())
+  ideaId          String
+  // Snapshot of the idea title at run time — protects against later edits.
+  ideaTitle       String
+  // The translator's verdict on how well it could map the idea → a strategy.
+  matchedStrategy String
+  matchConfidence Float    // 0-1 — how confident the translator was
+  matchNotes      String   @default("")
+  // The BacktestConfig that was actually fed to the engine (JSON).
+  configJson      String
+  // The full BacktestResult (JSON) — metrics, trades, equity curve.
+  resultJson      String
+  // Headline metrics (denormalised for easy querying / sorting).
+  totalReturn     Float
+  sharpeRatio     Float
+  maxDrawdown     Float
+  winRate         Float
+  profitFactor    Float
+  totalTrades     Int
+  finalEquity     Float
+  // The pass/fail verdict + the rule that decided it.
+  verdict         String   // "passed" | "failed" | "error"
+  verdictReason   String   @default("")
+  engineMs        Int      // how long runBacktest() took
+  dataSource      String   @default("synthetic")
+  // JSON-serialised DataProvenance: { source, attemptedSources[], barsFetched, fallbackReason? }
+  // Populated when real bars were fetched (or attempted) so the UI can show
+  // "Real data: Alpaca, 1247 bars" or "Synthetic (Alpaca failed: 401)".
+  dataProvenanceJson String?
+  // JSON-serialised VerdictRule actually used for this run (per-strategy
+  // category rule, optionally patched with verdictOverrides). Shape:
+  //   { minTrades, minSharpe, minTotalReturn, maxDrawdown, _customized }
+  // Null on legacy rows (persisted before this column existed) — UI falls
+  // back to the per-strategy rule re-derived from the matched strategy id.
+  verdictRuleJson   String?
+  errorMessage    String?  // populated only when verdict="error"
+  createdAt       DateTime @default(now())
+
+  @@index([ideaId])
+  @@index([verdict])
+  @@index([createdAt])
+  @@index([sharpeRatio])
+  @@map("qm_idea_backtests")
+}
+
+model QmSeenUrl {
+  url       String   @id
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now())
+
+  @@map("qm_seen_urls")
+}
+
+// ─── Quant Mind — Portfolio Backtest (multi-symbol per idea) ──────────────
+// One row per portfolio backtest run (multiple symbols × the same translated
+// strategy, aggregated into a portfolio equity curve + portfolio metrics).
+// Mirrors QmIdeaBacktest but stores per-symbol results + the combined
+// portfolio aggregate so the UI can render the portfolio view without
+// re-running the engine.
+
+model QmIdeaPortfolioBacktest {
+  id                String   @id @default(cuid())
+  ideaId            String
+  ideaTitle         String
+  // JSON array of symbols, e.g. ["AAPL","SPY","QQQ"]
+  symbolsJson       String
+  // JSON object {symbol: weight}, e.g. {"AAPL":0.333,"SPY":0.333,"QQQ":0.334}
+  weightsJson       String
+  // JSON array of PerSymbolResult (metrics + equity curve per symbol)
+  perSymbolJson     String
+  // JSON object of AggregateMetrics (totalReturn, sharpe, maxDrawdown, etc.)
+  portfolioJson     String
+  // JSON array of {t, equity} — combined portfolio equity curve
+  equityCurveJson   String
+  // Headline metrics (denormalised for easy querying / sorting)
+  totalReturn       Float
+  sharpeRatio       Float
+  maxDrawdown       Float
+  totalTrades       Int
+  finalEquity       Float
+  durationMs        Int
+  errorMessage      String?
+  createdAt         DateTime @default(now())
+
+  @@index([ideaId])
+  @@index([createdAt])
+  @@map("qm_idea_portfolio_backtests")
+}
+
+model QmReport {
+  reportId        String   @id
+  generatedAt     DateTime @default(now())
+  periodCovered   String
+  totalSources    Int
+  totalArticles   Int
+  totalIdeas      Int
+  topIdeas        String   // JSON array of {title, idea_type, confidence, source_title}
+  summary         String
+  recommendations String   // JSON array of strings
+
+  @@index([generatedAt])
+  @@map("qm_reports")
+}
+
+// ─── Quant Macro (macro_engine_v12.py port) ──────────────────────────
+// Live port of the Python macro bias engine. Snapshot is replaced each run;
+// backtest results are accumulated. Pipeline runs are tracked for audit.
+//
+// HISTORY (Round 2): The singleton `QmMacroSnapshot` (id="current") is now
+// a "current pointer" — it's upserted on every run as before (fast reads for
+// the UI). But every save ALSO appends a row to `QmMacroSnapshotHistory`
+// (auto-id, never overwritten), so the full time-series of regime shifts is
+// preserved. This unlocks regime-shift detection ("VIX jumped from 18 → 32
+// in 3 days") and lets the hypothesis-graph correlate strategy failures
+// with the regime that was active when the strategy was tested.
+
+model QmMacroSnapshot {
+  id          String   @id @default("current") // singleton — always "current"
+  payload     String                          // full JSON blob of macro_data.json shape
+  generatedAt DateTime @default(now())
+  source      String   @default("live")       // "live" | "sample"
+  vix         Float?
+  hyOas       Float?
+  regimeLabel String?
+
+  @@map("qm_macro_snapshot")
+}
+
+// Append-only history of every macro snapshot ever saved. One row per
+// `saveMacroSnapshot()` call. The latest row mirrors `QmMacroSnapshot.id="current"`.
+// Use this for regime-shift detection and time-series analysis — query
+// `ORDER BY generatedAt DESC LIMIT N` to walk backwards through regime changes.
+model QmMacroSnapshotHistory {
+  id          String   @id @default(cuid())
+  payload     String                          // full JSON blob (same shape as QmMacroSnapshot.payload)
+  generatedAt DateTime @default(now())
+  source      String   @default("live")       // "live" | "sample"
+  vix         Float?
+  hyOas       Float?
+  regimeLabel String?
+
+  @@index([generatedAt])
+  @@index([regimeLabel])
+  @@index([source])
+  @@map("qm_macro_snapshot_history")
+}
+
+model QmFeatureEdgeResult {
+  id          String   @id @default(cuid())
+  pair        String                          // "EUR/USD" etc.
+  feature     String                          // "YieldSpread_Z" etc.
+  holdDays    Int                             // 1 | 5 | 10 | 20
+  nObs        Int
+  sharpe      Float
+  winRate     Float
+  cagr        Float
+  maxDd       Float
+  meanDaily   Float
+  tStat       Float
+  pValue      Float
+  significant Boolean
+  ic          Float?
+  permP       Float
+  qValue      Float?
+  edge        Boolean
+  generatedAt DateTime @default(now())
+
+  @@unique([pair, feature, holdDays])
+  @@index([pair])
+  @@index([feature])
+  @@index([holdDays])
+  @@index([edge])
+  @@map("qm_feature_edge_results")
+}
+
+model QmFeatureComboResult {
+  id               String   @id @default(cuid())
+  pair             String
+  comboName        String                          // "pair_CurveS_CarryR" etc.
+  features         String                          // |-joined string for parity with JSON
+  nFeatures        Int
+  method           String                          // "equal_weight" | "rank_average"
+  holdDays         Int
+  sharpe           Float
+  bestSingleSharpe Float
+  lift             Float
+  ic               Float
+  permP            Float
+  qValue           Float?
+  edge             Boolean
+  beatsSingle      Boolean
+  sharpeRiskOn     Float?
+  sharpeRiskOff    Float?
+  sharpeNeutral    Float?
+  nRiskOn          Int?
+  nRiskOff         Int?
+  generatedAt      DateTime @default(now())
+
+  @@unique([pair, comboName, method, holdDays])
+  @@index([pair])
+  @@index([edge])
+  @@index([beatsSingle])
+  @@map("qm_feature_combo_results")
+}
+
+model QmMacroRun {
+  id                String   @id @default(cuid())
+  startedAt         DateTime @default(now())
+  finishedAt        DateTime?
+  status            String   @default("running") // "running"|"success"|"failed"|"partial"
+  pipeline          String                          // "macro"|"feature-edge"|"feature-combo"|"full"
+  fredApiKeyPresent Boolean
+  articlesProcessed Int      @default(0)
+  cotRowsFetched    Int      @default(0)
+  newsItemsFetched  Int      @default(0)
+  calendarEvents    Int      @default(0)
+  pairsTested       Int      @default(0)
+  featuresTested    Int      @default(0)
+  combosTested      Int      @default(0)
+  durationMs        Int?
+  error             String?
+
+  @@index([startedAt])
+  @@index([status])
+  @@index([pipeline])
+  @@map("qm_macro_runs")
+}
+
+// ─── Quant Mind — Scheduler Run History ────────────────────────────────────
+// Every scheduler job execution (whether triggered by cron, by the API, or
+// by runAll) appends a row here. Use this for the scheduler run-history UI
+// and for debugging "why didn't the sunday backtest fire?".
+// Persistent state for scheduler jobs — survives server restarts.
+// BATCH-TIER5: the scheduler's `enabled`, `lastRunAt`, `lastRunStatus`,
+// `lastRunError`, `lastRunDurationMs` fields previously lived in globalThis
+// (in-memory only). Server restart reset all jobs to enabled=true and lost
+// all run history. This table is the source of truth — the in-memory
+// registry in scheduler.ts is now a cache of these rows.
+model QmSchedulerJob {
+  id                    String   @id                  // matches JobDefinition.id ("crawl_sources" etc.)
+  enabled               Boolean  @default(true)
+  lastRunAt             DateTime?
+  lastRunStatus         String?                         // "running" | "success" | "failed"
+  lastRunError          String?
+  lastRunDurationMs     Int?
+  lastMissedRecoveryAt  DateTime?                       // guards against double-recovery on rapid restarts
+
+  @@map("qm_scheduler_jobs")
+}
+
+model QmSchedulerRun {
+  id          String   @id @default(cuid())
+  jobId       String                          // "crawl_sources" | "extract_ideas" | etc.
+  triggeredBy String   @default("manual")     // "cron" | "manual" | "runAll"
+  status      String                          // "running" | "success" | "failed"
+  startedAt   DateTime @default(now())
+  finishedAt  DateTime?
+  durationMs  Int?
+  summary     String   @default("")
+  error       String?
+
+  @@index([jobId])
+  @@index([startedAt])
+  @@index([status])
+  @@map("qm_scheduler_runs")
+}
+
+// Cache for FRED series — avoids re-fetching within 24h
+model QmFredCache {
+  seriesId  String   @id                       // "DGS10" etc.
+  payload   String                            // JSON array of {date, value}
+  fetchedAt DateTime @default(now())
+
+  @@index([fetchedAt])
+  @@map("qm_fred_cache")
+}
+
+// Cache for CFTC COT data — avoids re-fetching within 7 days
+model QmCotCache {
+  id        String   @id @default("current")
+  payload   String                            // JSON array of records
+  source    String   @default("socrata")
+  fetchedAt DateTime @default(now())
+
+  @@map("qm_cot_cache")
+}
+
+// ─── Quant Mind Analytics Tracker (ICT Analytics Tracker v3.5 port) ───
+// Paper-trading ledger. Each row is a simulated $-priced trade on a strategy
+// extracted from the Quant Mind feed. Tracks entry/exit, R-multiple, return %,
+// and a composite "best trade" score for the EOD/EOW reports.
+
+model QmAnalyticsTrade {
+  id             String   @id @default(cuid())
+  strategyId     String?                          // optional QmIdea.id reference
+  strategyName   String                           // mirrors PaperTrade.strategy
+  instrument     String                           // mirrors PaperTrade.symbol
+  direction      String                           // "LONG" | "SHORT"
+  entryTime      DateTime @default(now())
+  entryPrice     Float
+  exitTime       DateTime?
+  exitPrice      Float?
+  stopLoss       Float?
+  takeProfit     Float?
+  rMultiple      Float?                           // win: +2R, loss: -1R
+  status         String   @default("open")        // "open" | "closed"
+  returnPct      Float?
+  compositeScore Float?
+  notes          String?
+  createdAt      DateTime @default(now())
+
+  @@index([strategyName])
+  @@index([status])
+  @@index([entryTime])
+  @@index([direction])
+  @@map("qm_analytics_trades")
+}
+
+// Daily equity snapshot for the paper-trading account — written once per
+// runFullPipeline() by recordDailyEquity() so the equity curve stays fresh.
+
+model QmAnalyticsDaily {
+  id         String   @id @default(cuid())
+  date       String                            // YYYY-MM-DD (NY tz)
+  equity     Float
+  realizedPnl Float
+  openTrades Int
+  createdAt  DateTime @default(now())
+
+  @@unique([date])
+  @@index([date])
+  @@map("qm_analytics_daily")
+}
+
+// Audit log + in-app notification feed.
+//
+// Dual purpose:
+//   1. Legacy audit log of every notification sent by the Discord / Telegram
+//      notifiers (notifier-discord.ts / notifier-telegram.ts). Those rows
+//      populate `channel`, `messageType`, `payload`, `status`, `error`, `sentAt`.
+//   2. In-app notification feed surfaced in the AppShell bell dropdown
+//      (src/lib/quant-mind/notifications.ts → notify()). Those rows populate
+//      `type`, `title`, `message`, `severity`, `entityType`, `entityId`,
+//      `payload`, `readAt`, `createdAt`.
+//
+// `channel` / `messageType` are nullable so the in-app `notify()` path (which
+// doesn't deal with Discord/Telegram) can leave them blank. Likewise the
+// in-app fields are nullable so the legacy audit path can leave them blank.
+
+model QmNotificationLog {
+  id          String   @id @default(cuid())
+  // ── Legacy audit fields (Discord/Telegram notifiers) ──────────────────────
+  channel     String?                          // "discord" | "telegram"
+  messageType String?                          // "full" | "alert" | "summary"
+  sentAt      DateTime @default(now())
+  status      String   @default("ok")          // "ok" | "failed" | "skipped"
+  error       String?
+  // ── In-app notification fields (notify() helper) ──────────────────────────
+  type        String?                          // "info"|"success"|"warning"|"error"|"idea"|"backtest"|"macro"|"alert"
+  title       String?
+  message     String?
+  severity    String?                          // "low" | "medium" | "high"
+  entityType  String?                          // "idea"|"backtest"|"article"|"macro"|"source"|"trade"
+  entityId    String?
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+  // Shared — JSON blob of whatever was sent (legacy) or arbitrary structured
+  // payload (in-app). Capped at 65535 chars by the writers.
+  payload     String
+
+  @@index([channel])
+  @@index([messageType])
+  @@index([sentAt])
+  @@index([type])
+  @@index([readAt])
+  @@index([createdAt])
+  @@index([entityType, entityId])
+  @@map("qm_notification_log")
+}
+
+// ─── Quant Macro — AI Briefing (multi-pass analyst pipeline) ──────────────
+// Each row is a full multi-pass AI briefing run. The pipeline does:
+//   Pass 1 — raw macro data structured into a normalized blob
+//   Pass 2 — AI pattern discovery (divergences, positioning extremes)
+//   Pass 3 — AI regime classification w/ confidence + shift triggers
+//   Pass 4 — AI validates/challenges the engine's own outputs
+//   Pass 5 — final synthesis + structured setup cards
+//
+// The `patternsJson`, `regimeJson`, `validationsJson`, `setupsJson` columns
+// store the structured output of each pass so the UI can render them and so a
+// future learning loop can mine them. `followupsJson` holds the conversation
+// turns after the initial briefing. `userRating` / `userNotes` / `promptVariant`
+// / `regimeLabel` are forward-compatible columns for the planned feedback
+// learning loop.
+
+model QmAiBriefing {
+  id               String   @id @default(cuid())
+  createdAt        DateTime @default(now())
+  lens             String                            // "general"|"risk"|"carry"|"commodity"|"em"|"positioning"
+  question         String   @default("")
+  dataSource       String   @default("sample")       // "live" | "sample"
+  snapshotAt       String                            // macro snapshot timestamp
+  rawContextJson   String                            // JSON of the normalized macro blob (Pass 1)
+  patternsJson     String   @default("[]")           // JSON of Pattern[] (Pass 2)
+  regimeJson       String   @default("{}")           // JSON of RegimeClassification (Pass 3)
+  validationsJson  String   @default("[]")           // JSON of Validation[] (Pass 4)
+  setupsJson       String   @default("[]")           // JSON of SetupCard[] (Pass 5)
+  briefing         String   @default("")             // markdown synthesis (Pass 5)
+  followupsJson    String   @default("[]")           // JSON of FollowupTurn[]
+  // Forward-compatible feedback / learning columns
+  userRating       Int?                              // 1-5
+  userNotes        String?
+  promptVariant    String?                           // e.g. "v1", "v2-pipeline"
+  regimeLabel      String?                           // AI-classified primary regime
+
+  @@index([createdAt])
+  @@index([lens])
+  @@index([regimeLabel])
+  @@map("qm_ai_briefings")
+}
+
+// ─── QuantForge — ICT Scanner (ict_agent.py port) ────────────────────────
+// Live port of the Python `ict_agent.py` ICTSwarmAgent scanner. Each
+// `QfIctScan` row is a full market scan (multiple instruments × multiple
+// strategies), and `QfIctSignal` rows are the individual signals produced
+// by the scan. Mirrors the Python's `last_scan_summary` + per-symbol
+// signals shape. Most-recent scan is also surfaced via the singleton
+// `QfIctLatestScan` row (id="current") so GET /api/ict-scanner returns
+// fast without sorting.
+
+model QfIctScan {
+  id               String   @id @default(cuid())
+  timestamp        DateTime @default(now())
+  timeframe        String                          // "15m" | "1H" etc.
+  killzone         String                          // "london"|"new_york"|"asian"|"off_session"
+  symbolsScanned   Int
+  strategiesChecked Int
+  totalSignals      Int
+  configJson       String                          // JSON of IctScanConfig
+  signalsBySymbolJson String                        // JSON of Record<string, number>
+  source           String   @default("live")        // "live" | "sample"
+  signals          QfIctSignal[]
+
+  @@index([timestamp])
+  @@index([source])
+  @@index([killzone])
+  @@map("qf_ict_scans")
+}
+
+model QfIctSignal {
+  id          String   @id @default(cuid())
+  scanId      String
+  scan        QfIctScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  timestamp   DateTime @default(now())
+  symbol      String
+  strategyId  String
+  strategyName String
+  direction   String                          // "LONG" | "SHORT"
+  entry       Float
+  stopLoss    Float
+  takeProfit  Float
+  rr          Float
+  confidence  Float
+  reason      String
+  timeframe   String
+  killzone    String
+
+  @@index([scanId])
+  @@index([symbol])
+  @@index([strategyId])
+  @@index([direction])
+  @@index([confidence])
+  @@map("qf_ict_signals")
+}
+
+// Singleton row pointing to the most recent QfIctScan id — used by
+// GET /api/ict-scanner to return the latest scan without sorting.
+model QfIctLatestScan {
+  id        String   @id @default("current")  // always "current"
+  scanId    String?
+  updatedAt DateTime @default(now())
+
+  @@map("qf_ict_latest_scan")
+}
+
+// ─── Quant Mind — Hypothesis Graph (the "Fine-Tune" loop) ──────────────────
+// The self-improving loop's memory. Every backtest run contributes a structural
+// row here (fingerprint + verdict + failureMode + metrics). When the user
+// clicks "Fine-tune & Re-run", the LLM reads the autopsy + similar past
+// hypotheses and populates `lessonText` + `suggestionJson`.
+//
+// The fingerprint (strategyType|assetClass|timeframe|indicatorKey) lets us find
+// "similar past hypotheses" when a new idea is tested — closing the loop so the
+// next strategy generation knows what's already been tried and why it failed.
+//
+// `lessonText` / `suggestionJson` are nullable: structural rows are written on
+// every backtest (cheap, no LLM); the expensive LLM lesson is generated only
+// on-demand when the user clicks "Fine-tune".
+model QmHypothesisLesson {
+  id                String   @id @default(cuid())
+  // Links back to the source idea + backtest run that produced this lesson.
+  ideaId            String
+  backtestId        String
+  ideaTitle         String                          // snapshot at run time
+  // The fingerprint — used to find "similar past hypotheses".
+  // Composed of: strategyType|assetClass|timeframe|indicatorKey
+  // e.g. "mean_reversion|equities|1h|rsi"
+  fingerprint       String
+  // Denormalized fingerprint parts for flexible querying / filtering.
+  strategyType      String                          // "mean_reversion"|"momentum"|"breakout"|"carry"|"default"
+  assetClass        String                          // "equities"|"forex"|"crypto"|"commodities"|"bonds"|"multi"
+  timeframe         String                          // "1h"|"4h"|"1d" etc.
+  indicatorKey      String   @default("")           // primary indicator slug (e.g. "rsi", "ma", "bb")
+  // Test context
+  regimeLabel       String?                         // from QmMacroSnapshot at test time (nullable)
+  verdict           String                          // "passed"|"failed"|"error"
+  failureMode       String                          // categorized failure mode (see FailureMode type)
+  failureModeDetail String   @default("")           // one-line reason extracted from verdictReason
+  // The lesson — LLM-generated natural language (nullable until fine-tune clicked)
+  lessonText        String?
+  // Structured suggestion — what to try next (nullable until fine-tune clicked)
+  // JSON of FineTuneSuggestion { diagnosis, paramTweaks[], regimeFilter?, alternativeStrategy?, recommendation, confidence }
+  suggestionJson    String?
+  // Headline metrics (denormalised from the backtest run for fast queries)
+  sharpeRatio       Float
+  maxDrawdown       Float
+  totalTrades       Int
+  totalReturn       Float
+  dataSource        String   @default("synthetic")
+  createdAt         DateTime @default(now())
+
+  @@index([ideaId])
+  @@index([fingerprint])
+  @@index([strategyType])
+  @@index([assetClass])
+  @@index([failureMode])
+  @@index([verdict])
+  @@index([createdAt])
+  @@map("qm_hypothesis_lessons")
+}
+
+
+// ─── Quant Loop — Compounding AI Trading Engine (workspace 6) ───────────────
+// The self-improving loop's spine. Extends the existing QmHypothesisLesson
+// (which captures the existing "Fine-tune & Re-run" feature) with:
+//   - proper hypothesis lineage (edges: DERIVATIVE_OF, CONTRADICTS, COMBINES,
+//     DECAYED_INTO, SIMILAR_TO)
+//   - cycle-run audit trail
+//   - twin-replay trade audit (the honest-cost-accounting moat)
+//   - Thompson-sampling search priors per (family, regime)
+//   - meta-critic reports (loop-level validation, not per-strategy)
+//   - semantic failure log (avoidance_rule, repair_condition)
+//
+// Naming convention: `Ql*` prefix to distinguish from `Qm*` (Quant Mind) and
+// `Qf*` (QuantForge). All tables `@@map("ql_...")`.
+//
+// NON-DESTRUCTIVE: these models are additive — existing models and tables
+// are untouched. The infusion script runs `prisma db push` to apply.
+
+// ─── QlHypothesis — the proper hypothesis graph node ───────────────────────
+// Distinct from QmHypothesisLesson (which is a structural row written on
+// every backtest). QlHypothesis is the LLM-generated hypothesis itself with
+// full semantic context: mechanism family, archetype, lineage, live evidence.
+//
+// One QlHypothesis corresponds to ONE LLM-generated research hypothesis. It
+// may be tested by multiple QmIdeaBacktest runs (re-tests after parameter
+// tweaks) but the hypothesis itself is the unit the loop remembers.
+
+model QlHypothesis {
+  id                String   @id @default(cuid())
+  // Natural-language hypothesis statement (LLM-generated)
+  statement         String
+  // Coarse mechanism family — drives the Thompson sampler
+  // "trend"|"momentum"|"mean_reversion"|"breakout"|"carry"|"reversal"|"liquidity"|"stat_arb"|"default"
+  mechanismFamily   String
+  // Fine-grained archetype (XAlpha-style C-layer) — start with ~12
+  // e.g. "ema_crossover", "rsi_divergence", "yield_curve_carry", "vol_breakout"
+  archetype         String
+  // JSON: { inputs, transformations, output } — the factor contract
+  codeSpecJson      String
+  // Status lifecycle
+  // "proposed" → "testing" → "validated" → "failed" → "decayed" → "promoted_live"
+  status            String   @default("proposed")
+  // JSON array of regime tags: ["RISK_ON","RISK_OFF","NEUTRAL"]
+  regimeTags        String   @default("[]")
+  // The cycle this hypothesis was generated in
+  cycleCreated      Int
+  // The cycle this hypothesis was last validated/failed in (nullable until tested)
+  cycleValidated    Int?
+  // Lineage — which hypothesis_ids this one responds to (failed ancestors)
+  // JSON array of strings. Also materialized as QlHypothesisEdge rows for graph queries.
+  respondsToFailureIds String @default("[]")
+  // When status = "failed", populated with failure semantics
+  failureType       String?  // "weak_ic"|"unstable_oos"|"direction_inconsistency"|"redundancy"|"capacity_exceeded"|"live_backtest_gap"|"engine_error"
+  failedAssumption  String?  // What economic premise broke
+  avoidanceRule     String?  // "Don't retest volume-only spike templates"
+  repairCondition   String?  // "Would work if regime-conditioned on directional pressure"
+  // Backtest evidence (denormalized headline metrics)
+  btSharpe          Float?
+  btDeflatedSharpe  Float?
+  btMaxDrawdown     Float?
+  btTotalTrades     Int?
+  btTotalReturn     Float?
+  btRegimeResults   String?  // JSON: { "RISK_ON": {sharpe, ic}, "RISK_OFF": {...}, ... }
+  // Live evidence (populated by the twin-replay + cost-accounting layer)
+  livePnl           Float?
+  liveSlippageBps   Float?
+  liveCapacityUsd   Float?
+  liveBacktestGap   Float?   // live_pnl - bt_pnl (negative = live underperformed)
+  // PaperPosition.id (in the PaperPosition table) when this hypothesis has
+  // been promoted to live. Set by promoteToLive() when the hypothesis passes
+  // backtest + the meta-critic doesn't flag overfitting. Twin-replay then
+  // audits the closed trades from this position and writes the live-vs-bt
+  // gap back into the live* columns above + QlTradeAudit rows.
+  livePositionId    String?
+  // Source idea link (if this hypothesis was inspired by a QmIdea)
+  sourceIdeaId      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Edges where this is the source
+  outEdges          QlHypothesisEdge[] @relation("EdgeFrom")
+  // Edges where this is the target
+  inEdges           QlHypothesisEdge[] @relation("EdgeTo")
+
+  @@index([mechanismFamily])
+  @@index([archetype])
+  @@index([status])
+  @@index([cycleCreated])
+  @@index([failureType])
+  @@index([sourceIdeaId])
+  @@map("ql_hypotheses")
+}
+
+// ─── QlHypothesisEdge — lineage and semantic relationships ─────────────────
+// Materialized edges of the hypothesis graph. The respondsToFailureIds JSON
+// array on QlHypothesis is the cheap index; this table is the queryable graph.
+//
+// Edge types:
+//   DERIVATIVE_OF  — this hypothesis is a refinement/mutation of an ancestor
+//   CONTRADICTS    — this hypothesis succeeded in a regime where ancestor failed
+//   COMBINES       — this hypothesis is a crossover of two ancestors
+//   DECAYED_INTO   — a previously-working hypothesis stopped working in this regime
+//   SIMILAR_TO     — semantic similarity (embedding cosine > threshold)
+//   RESPONDS_TO_FAILURE — this hypothesis was explicitly generated to fix a failure
+
+model QlHypothesisEdge {
+  id           String   @id @default(cuid())
+  fromId       String
+  toId         String
+  // See type list above
+  edgeType     String
+  // Optional weight (e.g. similarity score for SIMILAR_TO)
+  weight       Float    @default(1.0)
+  // Optional context (e.g. which regime a CONTRADICTS edge applies to)
+  contextJson  String?
+  createdAt    DateTime @default(now())
+
+  fromHypothesis QlHypothesis @relation("EdgeFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  toHypothesis   QlHypothesis @relation("EdgeTo", fields: [toId], references: [id], onDelete: Cascade)
+
+  @@unique([fromId, toId, edgeType])
+  @@index([fromId])
+  @@index([toId])
+  @@index([edgeType])
+  @@map("ql_hypothesis_edges")
+}
+
+// ─── QlCycleRun — one execution of the full 6-phase loop ───────────────────
+// Audit trail of every cycle the orchestrator has run. Used by the meta-critic
+// to compute "Compounding Loop Sharpe" — rolling live PnL improvement per
+// cycle vs. backtest metric improvement per cycle.
+
+model QlCycleRun {
+  id               String   @id @default(cuid())
+  cycleNumber      Int      @unique             // 1, 2, 3, ... (monotonic + race-safe)
+  startedAt        DateTime @default(now())
+  finishedAt       DateTime?
+  status           String   @default("running") // "running"|"success"|"failed"|"partial"
+  // Regime at the time the cycle started (from QmMacroSnapshot)
+  regimeLabel      String?
+  // The hypothesis_id generated this cycle (if any)
+  hypothesisId     String?
+  // Backtest summary (denormalized)
+  btSharpe         Float?
+  btDeflatedSharpe Float?
+  btVerdict        String?                      // "passed"|"failed"|"error"
+  btFailureMode    String?
+  // Did this cycle's hypothesis get promoted to live?
+  promotedToLive   Boolean  @default(false)
+  // Live PnL snapshot (cumulative, populated by the cost-accounting layer)
+  cumulativeLivePnl  Float?
+  cumulativeBtPnl    Float?
+  // Cumulative cycle count for DSR (multiple-testing correction at the meta level)
+  cumulativeTrials Int?
+  // Meta-critic verdict for this cycle
+  metaVerdict      String?                      // "compounding"|"flat"|"overfitting"|"unknown"
+  metaNotes        String?
+  // Was the AST gate skipped (e.g. backtest-svc unreachable)? When true, the
+  // backtest ran on unvalidated LLM-generated Python code. Surfaced in the UI
+  // as a warning badge on the cycle timeline. Previously this was set by the
+  // orchestrator but the column didn't exist, so it was silently dropped on
+  // write. Added in the third audit round.
+  astGateSkipped   Boolean  @default(false)
+  // Epoch-holdout counter for the NEXT cycle to consume. When meta-critic
+  // flags "overfitting", the orchestrator sets this to 5; the next cycle
+  // decrements it and passes epochHoldoutActive=true to the prior-updater
+  // (freezing the Thompson sampler's prior for the duration of the holdout).
+  // Caught in audit-Q1: column didn't exist on QlCycleRun, so the orchestrator
+  // hardcoded epochHoldoutCycles=0 in the evaluateCycle call and the entire
+  // epoch-holdout feature was vestigial.
+  epochHoldoutCycles Int?   @default(0)
+  // 4-stage lite validation gate (IS Sharpe, OOS Sharpe, t-stat, 3× cost-
+  // sensitivity) — JSON blob computed in backtest-bridge.runFactorBacktest
+  // and surfaced through /api/quant-loop/cycle-history so the UI can show
+  // WHY a hypothesis passed or failed. Caught in AUDIT-QLOOP: stages were
+  // computed but thrown away before persistence, so the user only ever saw
+  // pass/fail.
+  validationStagesJson String?
+  // "real" (live backtest-svc /run-factor on SPY) or "simulation" (synthetic
+  // return series). Surfaces whether the cycle's backtest result is based on
+  // real market data or a fallback simulation. Caught in AUDIT-QLOOP.
+  dataSource        String?
+  // When meta-critic says "flat", the orchestrator picks a different
+  // archetype for the NEXT cycle to break out of a plateau. Stored here so
+  // the next cycle's runCycle() can read it + pass it to runStateMachine as
+  // input.targetArchetype. Caught in AUDIT-QLOOP: meta-critic verdicts were
+  // produced but never consumed, so "flat"/"compounding" had no behavioral
+  // effect on the loop.
+  nextTargetArchetype String?
+  durationMs       Int?
+  error            String?
+
+  @@index([cycleNumber])
+  @@index([startedAt])
+  @@index([status])
+  @@index([regimeLabel])
+  @@map("ql_cycle_runs")
+}
+
+// ─── QlTradeAudit — the honest-cost-accounting moat ────────────────────────
+// One row per closed live trade, with the backtest-predicted "twin" attached.
+// The diff between twin and reality is the honest number — the gap any
+// compounding loop MUST learn from.
+//
+// Populated by the twin-replay engine (src/lib/quant-loop/twin-replay.ts).
+// Joined to Trade by ticket (not FK — Trade.ticket is @unique).
+
+model QlTradeAudit {
+  id              String   @id @default(cuid())
+  // The live trade this audit row is for (joined via ticket)
+  tradeTicket     Int
+  strategyId      String                          // QlHypothesis.id or QmIdea.id
+  instrument      String
+  signalTs        DateTime                        // when the signal fired
+  // Backtest-predicted "twin"
+  btEntry         Float
+  btExit          Float?
+  btRMultiple     Float?
+  // Actual live fill
+  liveEntry       Float
+  liveExit        Float?
+  liveRMultiple   Float?
+  // Real costs (not modeled)
+  spreadAtFill    Float
+  commission      Float
+  swap            Float
+  // The honest numbers
+  slippageR       Float?                          // live_R - bt_R (negative = live underperformed)
+  costDragPct     Float?                          // (spread+commission+swap) as % of avg expected R
+  // Regime at signal time
+  regimeTag       String?
+  // Source — "mt5" | "alpaca_paper" | "alpaca_live"
+  source          String   @default("mt5")
+  createdAt       DateTime @default(now())
+
+  @@index([tradeTicket])
+  @@index([strategyId])
+  @@index([instrument])
+  @@index([signalTs])
+  @@index([regimeTag])
+  @@index([source])
+  @@map("ql_trade_audit")
+}
+
+// ─── QlSearchPrior — Thompson sampling Beta(α, β) table ─────────────────────
+// One row per (mechanism_family × regime). α bumped on SUCCESS, β on FAILED.
+// Sample from Beta(α, β) to pick the next family — principled
+// exploration/exploitation instead of the substring filter in poc_epistemic_loop.py.
+//
+// Initial uniform prior: α=1, β=1 (so Beta(1,1) = Uniform).
+
+model QlSearchPrior {
+  id              String   @id @default(cuid())
+  mechanismFamily String
+  regimeLabel     String                          // "RISK_ON"|"RISK_OFF"|"NEUTRAL"|"ANY"
+  alpha           Float    @default(1.0)          // successes + 1
+  beta            Float    @default(1.0)          // failures + 1
+  trials          Int      @default(0)
+  successes       Int      @default(0)
+  failures        Int      @default(0)
+  // Last time this prior was updated (for annealing schedule)
+  lastUpdated     DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  @@unique([mechanismFamily, regimeLabel])
+  @@index([mechanismFamily])
+  @@index([regimeLabel])
+  @@map("ql_search_priors")
+}
+
+// ─── QlMetaCriticReport — loop-level validation ────────────────────────────
+// One row per cycle's meta-critic evaluation. The meta-critic checks whether
+// the LOOP is getting better, not just whether individual strategies pass.
+//
+// Key metric: Compounding Loop Sharpe = rolling live PnL improvement per cycle
+// vs. backtest metric improvement per cycle. If backtest up but live flat →
+// meta-overfitting flag.
+
+model QlMetaCriticReport {
+  id                   String   @id @default(cuid())
+  cycleNumber          Int
+  // Per-strategy validation
+  deflatedSharpe       Float?                          // DSR with cumulative cycle count
+  trialsCounted        Int?                            // how many hypotheses counted
+  // Loop-level metrics
+  rollingLiveSharpe    Float?                          // last N cycles' live PnL Sharpe
+  rollingBtSharpe      Float?                          // last N cycles' backtest Sharpe
+  compoundingLoopSharpe Float?                         // rollingLiveSharpe - rollingBtSharpe gap
+  // Verdict: "compounding" | "flat" | "overfitting" | "unknown"
+  verdict              String   @default("unknown")
+  // Notes from the meta-critic (e.g. "increased epoch holdout strictness")
+  notes                String?
+  // Epoch holdout status
+  epochHoldoutActive   Boolean  @default(false)
+  epochHoldoutCycles   Int      @default(0)            // how many cycles are reserved
+  createdAt            DateTime @default(now())
+
+  @@index([cycleNumber])
+  @@index([verdict])
+  @@index([createdAt])
+  @@map("ql_meta_critic_reports")
+}
+
+// ─── QlFailureLog — semantic failure log ───────────────────────────────────
+// When a hypothesis fails, the LLM post-mortem extracts a structured failure
+// entry: failure_type, failed_assumption, avoidance_rule, repair_condition.
+// This is the "negative results are first-class assets" store.
+//
+// Distinct from QlHypothesis.failureType etc. because a single hypothesis can
+// fail for multiple reasons across regimes — this log captures each instance.
+
+model QlFailureLog {
+  id                String   @id @default(cuid())
+  hypothesisId      String
+  // The cycle this failure was logged
+  cycleNumber       Int
+  // Regime at failure time
+  regimeLabel       String
+  // Failure semantics
+  failureType       String                          // "weak_ic"|"unstable_oos"|"direction_inconsistency"|"redundancy"|"capacity_exceeded"|"live_backtest_gap"|"engine_error"
+  failedAssumption  String                          // What economic premise broke
+  avoidanceRule     String                          // "Don't retest volume-only spike templates"
+  repairCondition   String?                         // "Would work if regime-conditioned on directional pressure"
+  // Backtest metrics at failure (for correlation analysis)
+  btSharpe          Float?
+  btDeflatedSharpe  Float?
+  btMaxDrawdown     Float?
+  // The LLM-generated autopsy (free text — the "why")
+  autopsyText       String?
+  createdAt         DateTime @default(now())
+
+  @@index([hypothesisId])
+  @@index([cycleNumber])
+  @@index([regimeLabel])
+  @@index([failureType])
+  @@index([createdAt])
+  @@map("ql_failure_log")
+}
+
+// ─── orchestration + memory models (fix_hubb.py v2) ───
+// Field shapes inferred from orchestration-service.ts + memory-service.ts.
+// Every field here is read or written by the corresponding service — no
+// speculative columns. The relations are required because getAgentById /
+// getAgents use `include` on budgets/governance/goals/heartbeats.
+
+model AgentNode {
+  id            String          @id @default(cuid())
+  workspaceId   String
+  name          String
+  role          String
+  status        String          @default("idle")
+  config        String          @default("{}")
+  parentId      String?
+  parent        AgentNode?      @relation("AgentHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children      AgentNode[]     @relation("AgentHierarchy")
+  budgets       AgentBudget[]
+  governance    AgentGovernance[]
+  goals         AgentGoal[]
+  heartbeats    AgentHeartbeat[]
+  activities    AgentActivity[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([workspaceId])
+  @@index([status])
+  @@index([parentId])
+  @@map("agent_node")
+}
+
+model AgentBudget {
+  id            String   @id @default(cuid())
+  agentId       String
+  agent         AgentNode @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  resourceKey   String
+  limitValue    Float
+  currentUsage  Float    @default(0)
+  unit          String   @default("")
+  period        String   @default("daily")
+  resetAt       DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // The service does findFirst({ agentId, resourceKey }) as an upsert key.
+  @@unique([agentId, resourceKey])
+  @@index([agentId])
+  @@index([period])
+  @@map("agent_budget")
+}
+
+model AgentGovernance {
+  id            String   @id @default(cuid())
+  agentId       String
+  agent         AgentNode @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  ruleName      String
+  ruleType      String
+  condition     String   @default("{}")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([agentId])
+  @@index([isActive])
+  @@map("agent_governance")
+}
+
+model AgentGoal {
+  id            String   @id @default(cuid())
+  agentId       String
+  agent         AgentNode @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  title         String
+  metric        String
+  targetValue   Float
+  currentValue  Float    @default(0)
+  priority      String   @default("medium")
+  deadline      DateTime?
+  achievedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([agentId])
+  @@map("agent_goal")
+}
+
+model AgentHeartbeat {
+  id            String   @id @default(cuid())
+  agentId       String
+  agent         AgentNode @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  status        String
+  latencyMs     Int?
+  message       String?
+  checkedAt     DateTime @default(now())
+
+  @@index([agentId])
+  @@index([checkedAt])
+  @@map("agent_heartbeat")
+}
+
+model AgentActivity {
+  id            String   @id @default(cuid())
+  agentId       String
+  agent         AgentNode @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  action        String
+  detail        String   @default("{}")
+  result        String   @default("{}")
+  durationMs    Int?
+  success       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  @@index([agentId])
+  @@index([createdAt])
+  @@map("agent_activity")
+}
+
+// ─── Memory pipeline models ─────────────────────────────────────────────
+// 4-tier pipeline: ChatMemory → distill → Skill / Knowledge → promote → Wiki
+
+model ChatMemory {
+  id            String   @id @default(cuid())
+  sessionId     String
+  role          String
+  content       String
+  metadata      String   @default("{}")
+  createdAt     DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([createdAt])
+  @@map("chat_memory")
+}
+
+model Skill {
+  id            String   @id @default(cuid())
+  name          String
+  category      String
+  content       String
+  sourceSession String?
+  confidence    Float    @default(0)
+  usageCount    Int      @default(0)
+  lastUsedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([category])
+  @@index([confidence])
+  @@map("skill")
+}
+
+model Knowledge {
+  id            String   @id @default(cuid())
+  title         String
+  domain        String
+  content       String
+  sourceUrl     String?
+  sourceType    String   @default("mined")
+  relevance     Float    @default(0)
+  tags          String   @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([domain])
+  @@index([relevance])
+  @@map("knowledge")
+}
+
+model Wiki {
+  id             String   @id @default(cuid())
+  title          String
+  section        String
+  content        String
+  lastVerifiedAt DateTime?
+  version        Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([section])
+  @@index([title])
+  @@map("wiki")
+}
+
+model MemoryPipelineLog {
+  id            String   @id @default(cuid())
+  fromTier      String
+  toTier        String
+  sourceId      String
+  operation     String
+  summary       String
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("memory_pipeline_log")
+}
+
+// ─── OpenAlice: Issues ──────────────────────────────────────────────────────
+
+model Issue {
+  id            String    @id @default(cuid())
+  title         String
+  description   String    @default("")
+  status        String    @default("open")      // open | in-progress | review | done | cancelled
+  priority      String    @default("medium")   // low | medium | high | critical
+  assignee      String    @default("")
+  labels        String    @default("[]")        // JSON array
+  tags          String    @default("[]")        // JSON array
+  workspaceId   String    @default("")
+  sourceEntityId String?
+  scheduleAt    String?
+  closedAt      DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status])
+  @@index([priority])
+  @@index([workspaceId])
+  @@index([createdAt])
+}
+
+// ─── OpenAlice: Tracked Entities (Obsidian-like memory graph) ───────────────
+
+model Entity {
+  id          String   @id @default(cuid())
+  name        String
+  type        String   @default("ticker")  // ticker | sector | theme | thesis | person | risk
+  description String   @default("")
+  tags        String   @default("[]")       // JSON array
+  links       String   @default("[]")       // JSON array of entity IDs
+  metadata    String   @default("{}")       // JSON object
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  entityLinksFrom EntityLink[] @relation("EntityFrom")
+  entityLinksTo   EntityLink[] @relation("EntityTo")
+
+  @@index([type])
+  @@index([name])
+}
+
+// ─── OpenAlice: Entity Links (graph edges) ───────────────────────────────────
+
+model EntityLink {
+  id        String   @id @default(cuid())
+  fromId    String
+  toId      String
+  context   String   @default("")
+  strength  Int      @default(1)
+  createdAt DateTime @default(now())
+
+  from Entity @relation("EntityFrom", fields: [fromId], references: [id])
+  to   Entity @relation("EntityTo",   fields: [toId],   references: [id])
+
+  @@unique([fromId, toId])
+  @@index([fromId])
+  @@index([toId])
+}
+
+// ─── Macro Briefing: Config ─────────────────────────────────────────────────
+
+model MacroConfig {
+  id             String   @id @default(cuid())
+  webhookUrl     String   @default("")
+  scheduleHour   Int      @default(7)        // Hour in WAT (0-23)
+  scheduleMinute Int      @default(0)
+  enabled        Boolean  @default(false)
+  symbols        String   @default("[]")      // JSON array of custom symbols
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// ─── Macro Briefing: Delivery History ───────────────────────────────────────
+
+model MacroBriefingLog {
+  id        String   @id @default(cuid())
+  title     String
+  content   String                       // The generated briefing markdown
+  rawData   String   @default("{}")      // Raw market data JSON snapshot
+  sentiment String   @default("neutral")  // risk-on | risk-off | neutral | mixed
+  status    String   @default("draft")    // draft | sent | failed
+  error     String   @default("")
+  sentAt    DateTime @default(now())
+}
+
+
+// ─── Quant Mind — Typed Knowledge Layer (quant-mind integration) ──────────
+// Backs the TS port of quantmind/knowledge/_base.py + quantmind/flows/paper_flow.py.
+
+model QmPaperArtifact {
+  id                     String   @id
+  arxivId                String
+  title                   String
+  authors                String   // JSON array
+  publishedDate          DateTime?
+  asOf                   DateTime
+  availableAt            DateTime @default(now())
+  contentHash            String
+  sourceUri              String
+  retrievedAt            DateTime
+  extractionModel        String?
+  extractionPromptVersion String?
+  extractedAt            DateTime?
+  warnings               String   // JSON array of { code, message }
+  nodesJson              String   // JSON array of TreeNode
+
+  @@index([arxivId])
+  @@index([asOf])
+  @@index([publishedDate])
+  @@map("qm_paper_artifacts")
+}
+
+model QmChunk {
+  id          String   @id
+  parentId    String
+  charStart   Int
+  charEnd     Int
+  text        String
+  asOf        DateTime
+  sourceUri   String
+
+  @@index([parentId])
+  @@index([asOf])
+  @@index([sourceUri])
+  @@map("qm_chunks")
+}
+
+// ─── Paper Trading — persisted positions ───────────────────────────────
+// Backs src/lib/paper/index.ts. Was an in-memory Map before this patch —
+// positions vanished on every server restart/redeploy, which doesn't work
+// for anything meant to be a real track record (e.g. Quant Macro's
+// "Potential Plays" tracker). direction/stopPrice/targetPrice are optional
+// because generic strategy paper trading (the original use of this
+// engine) doesn't set them and keeps working exactly as before.
+model PaperPosition {
+  id            String    @id
+  strategyId    String
+  symbol        String
+  capital       Float
+  direction     String?   // "LONG" | "SHORT" — null for generic (non-directional) paper trading
+  entryPrice    Float?
+  stopPrice     Float?
+  targetPrice   Float?
+  lastPrice     Float?
+  currentEquity Float
+  pnl           Float     @default(0)
+  pnlPct        Float     @default(0)
+  trades        Int       @default(0)
+  status        String    @default("running") // running | stopped | killed | target_hit | stopped_out
+  simulated     Boolean   @default(true)
+  livePrice     Boolean   @default(false)
+  paramsJson    String    @default("{}") // free-form bag: thesis, briefingId, setupIndex, keyLevels, ...
+  startedAt     DateTime  @default(now())
+  stoppedAt     DateTime?
+  killedAt      DateTime?
+  updatedAt     DateTime  @updatedAt
+
+  @@index([strategyId])
+  @@index([symbol])
+  @@index([status])
+  @@map("paper_positions")
+}
+
+
+// Scanner models — appended by HUBB-with-scanner integration.
+// All @map'd to distinct table names to avoid colliding with HUBB's existing models.
+// Run `bunx prisma db push` to create these tables.
+// ===========================================================================
+
+model ScanResult {
+  id           String   @id @default(cuid())
+  strategyKey  String
+  strategyType String   // "trend" | "ict" | "trader" | "ea" | "horc"
+  symbol       String
+  timeframe    String
+  direction    String   // "long" | "short" | "neutral"
+  score        Float
+  grade        String?  // "A+" | "A" | "B+" | "B-"" | "C"
+  reasonsJson  String
+  entryPrice   Float?
+  stopPrice    Float?
+  targetPrice  Float?
+  createdAt    DateTime @default(now())
+
+  @@index([symbol, timeframe])
+  @@index([strategyKey])
+  @@index([createdAt])
+  @@map("scanner_scan_results")
+}
+
+model BacktestByGrade {
+  id           String   @id @default(cuid())
+  strategyKey  String
+  family       String
+  label        String
+  symbol       String
+  timeframe    String
+  winRate      Float
+  profitFactor Float
+  maxDrawdown  Float
+  totalTrades  Int
+  avgRR        Float    @default(0)
+  gradeAPlus   Int      @default(0)
+  gradeA       Int      @default(0)
+  gradeBPlus   Int      @default(0)
+  gradeBMinus  Int      @default(0)
+  gradeC       Int      @default(0)
+  avgScore     Float    @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([strategyKey])
+  @@index([family])
+  @@map("scanner_backtest_by_grade")
+}
+
+model AlertConfigScanner {
+  id            String   @id @default(cuid())
+  name          String
+  channel       String   // "telegram" | "email" | "discord" | "webhook"
+  destination   String   // webhook URL / chat ID / email
+  minScore      Float    @default(50)
+  strategyTypes String   @default("all") // comma-separated (SQLite doesn't support arrays)
+  symbols       String   @default("all") // comma-separated
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([enabled])
+  @@map("scanner_alert_configs")
+}
+
+model AlertLogScanner {
+  id          String   @id @default(cuid())
+  configId    String?
+  channel     String
+  destination String
+  subject     String
+  body        String
+  status      String   // "sent" | "failed"
+  error       String?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([configId])
+  @@map("scanner_alert_logs")
+}
+
+model StressTestResult {
+  id           String   @id @default(cuid())
+  strategyKey  String
+  family       String
+  symbol       String
+  timeframe    String
+  testResultsJson String  // JSON of {test, passed, details}[]
+  passedCount  Int
+  verdict      String   // "pass" | "review" | "fail"
+  score        Float
+  createdAt    DateTime @default(now())
+
+  @@index([strategyKey])
+  @@index([verdict])
+  @@map("scanner_stress_test_results")
+}

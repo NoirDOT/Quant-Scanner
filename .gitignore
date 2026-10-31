@@ -1,0 +1,10 @@
+node_modules/
+.next/
+db/
+*.db
+*.db-journal
+.env.local
+.env.*.local
+download/backtest-results.json
+data/csv/*.csv
+!data/csv/.gitkeep

@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 40 33% 98%;
+  --foreground: 20 14% 12%;
+  --primary: 161 91% 30%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 40 33% 95%;
+  --muted: 40 33% 92%;
+  --muted-foreground: 20 14% 45%;
+  --border: 40 33% 88%;
+  --paper: hsl(40 33% 98%);
+  --paper-2: hsl(40 33% 95%);
+  --ink: hsl(20 14% 12%);
+  --ink-2: hsl(20 14% 45%);
+  --stem: hsl(161 91% 30%);
+  --rule: hsl(40 33% 88%);
+}
+
+body { background: var(--paper); color: var(--ink); }
