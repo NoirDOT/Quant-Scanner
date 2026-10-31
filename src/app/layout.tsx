@@ -1,19 +1,20 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono, Fraunces } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
+const fraunces = Fraunces({ subsets: ["latin"], variable: "--font-serif", style: ["normal", "italic"] });
 
 export const metadata: Metadata = {
   title: "Quant Scanner",
-  description: "Multi-strategy market scanner with 48 strategies across 6 families",
+  description: "Multi-strategy market scanner — 48 strategies, 6 families",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${mono.variable}`}>
-      <body className="bg-background text-foreground font-sans antialiased">
+    <html lang="en" className={`${inter.variable} ${mono.variable} ${fraunces.variable}`}>
+      <body className="font-sans antialiased">
         {children}
       </body>
     </html>

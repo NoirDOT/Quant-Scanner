@@ -1,41 +1,43 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import {
-  Activity, RefreshCw, Clock, ArrowUpRight, ArrowDownRight,
-  Check, Zap, Radio,
-} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import type { ScanSignal } from "@/lib/scanner/types";
+import {
+  Activity, Clock, ArrowUp, ArrowDown, Zap, Radio,
+  TrendingUp, Target, Shield, Layers, CheckCircle2,
+} from "lucide-react";
 
-// ─── Validated scanners ──────────────────────────────────────────────────
+// ─── Data ────────────────────────────────────────────────────────────────
 
 const SCANNERS = [
-  { key: "trend-donchian",              short: "Donchian",     family: "Trend",     pass: "6/6", tier: "PERFECT" },
-  { key: "trend-ema",                   short: "EMA Stack",    family: "Trend",     pass: "5/6", tier: "GREAT" },
-  { key: "trend-supertrend-psar",       short: "ST+PSAR",      family: "Trend",     pass: "5/6", tier: "GREAT" },
-  { key: "trend-heikin-ashi",          short: "Heikin-Ashi",   family: "Trend",     pass: "5/6", tier: "GREAT" },
-  { key: "ict-fvg",                     short: "FVG",           family: "ICT",       pass: "5/6", tier: "GREAT" },
-  { key: "ict-liquidity",               short: "Liquidity",     family: "ICT",       pass: "5/6", tier: "GREAT" },
-  { key: "ea-btc-mom-adx",              short: "BTC Mom+ADX",  family: "EA",         pass: "5/6", tier: "GREAT" },
-  { key: "community-smc-bos-choch-s5", short: "SMC BOS s5",   family: "Community", pass: "5/6", tier: "GREAT" },
-  { key: "community-smc-bos-choch-s3", short: "SMC BOS s3",   family: "Community", pass: "5/6", tier: "GREAT" },
-  { key: "ict-ob",                      short: "Order Block",   family: "ICT",       pass: "4/6", tier: "OK" },
-  { key: "ict-ote",                     short: "OTE",           family: "ICT",       pass: "4/6", tier: "OK" },
-  { key: "ict-premium-discount",        short: "Premium/Disc",  family: "ICT",       pass: "4/6", tier: "OK" },
-  { key: "ea-ema-cloud-touch",         short: "EMA Cloud",     family: "EA",         pass: "4/6", tier: "OK" },
-  { key: "horc-origin-structure",       short: "HORC Origin",   family: "HORC",      pass: "4/6", tier: "OK" },
+  { key: "trend-donchian",              name: "Donchian",     family: "Trend",     pass: "6/6", tier: "PERFECT", color: "#3b82f6" },
+  { key: "trend-ema",                   name: "EMA Stack",    family: "Trend",     pass: "5/6", tier: "GREAT",   color: "#3b82f6" },
+  { key: "trend-supertrend-psar",       name: "ST+PSAR",      family: "Trend",     pass: "5/6", tier: "GREAT",   color: "#3b82f6" },
+  { key: "trend-heikin-ashi",          name: "Heikin-Ashi",   family: "Trend",     pass: "5/6", tier: "GREAT",   color: "#3b82f6" },
+  { key: "ict-fvg",                     name: "FVG",          family: "ICT",       pass: "5/6", tier: "GREAT",   color: "#10b981" },
+  { key: "ict-liquidity",               name: "Liquidity",     family: "ICT",       pass: "5/6", tier: "GREAT",   color: "#10b981" },
+  { key: "ea-btc-mom-adx",              name: "BTC Mom",       family: "EA",        pass: "5/6", tier: "GREAT",   color: "#8b5cf6" },
+  { key: "community-smc-bos-choch-s5", name: "SMC BOS s5",   family: "Community", pass: "5/6", tier: "GREAT",   color: "#06b6d4" },
+  { key: "community-smc-bos-choch-s3", name: "SMC BOS s3",   family: "Community", pass: "5/6", tier: "GREAT",   color: "#06b6d4" },
+  { key: "ict-ob",                      name: "Order Block",   family: "ICT",       pass: "4/6", tier: "OK",      color: "#10b981" },
+  { key: "ict-ote",                     name: "OTE",          family: "ICT",       pass: "4/6", tier: "OK",      color: "#10b981" },
+  { key: "ict-premium-discount",        name: "Premium/Disc",  family: "ICT",       pass: "4/6", tier: "OK",      color: "#10b981" },
+  { key: "ea-ema-cloud-touch",         name: "EMA Cloud",     family: "EA",        pass: "4/6", tier: "OK",      color: "#8b5cf6" },
+  { key: "horc-origin-structure",       name: "HORC Origin",   family: "HORC",      pass: "4/6", tier: "OK",      color: "#f43f5e" },
 ] as const;
 
-const TABS = ["Live", "Validated", "Prop Firm"] as const;
-type Tab = typeof TABS[number];
+const TIER_COLORS: Record<string, string> = {
+  PERFECT: "border-emerald-500/40 bg-emerald-500/5 text-emerald-700",
+  GREAT: "border-blue-500/30 bg-blue-500/5 text-blue-700",
+  OK: "border-amber-500/30 bg-amber-500/5 text-amber-700",
+};
 
-// ─── Component ──────────────────────────────────────────────────────────────
+// ─── Component ────────────────────────────────────────────────────────────
 
 export function IctScannerPage() {
-  const [tab, setTab] = useState<Tab>("Live");
   const [signals, setSignals] = useState<ScanSignal[]>([]);
   const [loading, setLoading] = useState(false);
   const [autoScan, setAutoScan] = useState(true);
@@ -43,6 +45,7 @@ export function IctScannerPage() {
   const [secondsAgo, setSecondsAgo] = useState(0);
   const [isLive, setIsLive] = useState(false);
   const [killzone, setKillzone] = useState("");
+  const [enabled, setEnabled] = useState<Set<string>>(new Set(SCANNERS.map(s => s.key)));
 
   const runScan = useCallback(async (silent = false) => {
     setLoading(true);
@@ -85,315 +88,322 @@ export function IctScannerPage() {
     }).catch(() => {});
   }, []);
 
-  return (
-    <div className="px-4 sm:px-6 lg:px-10 pt-6 pb-16">
-      {/* ─── Header ─── */}
-      <div className="flex items-end justify-between mb-6">
-        <div>
-          <p className="pepy-label mb-2">QuantForge</p>
-          <h1 className="pepy-heading-lg m-0">Strategy Scanner</h1>
-          <p className="pepy-subtitle m-0 mt-2">48 scanners · 6 families · live signal stream</p>
-        </div>
-        <div className="flex items-center gap-4 shrink-0">
-          {isLive && (
-            <span className="flex items-center gap-1.5">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--stem)] opacity-75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--stem)]" />
-              </span>
-              <span className="pepy-label text-[var(--stem)]">LIVE</span>
-            </span>
-          )}
-          {lastScan && (
-            <span className={cn("pepy-label", secondsAgo > 90 && "text-amber-500")}>
-              {secondsAgo < 60 ? `${secondsAgo}s ago` : `${Math.floor(secondsAgo / 60)}m ago`}
-            </span>
-          )}
-          {killzone && (
-            <span className="flex items-center gap-1">
-              <Clock size={11} className="text-[var(--ink-2)]" />
-              <span className="pepy-label">{killzone}</span>
-            </span>
-          )}
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <Switch checked={autoScan} onCheckedChange={setAutoScan} />
-            <span className="pepy-label">Auto</span>
-          </label>
-          <button
-            onClick={() => runScan(false)}
-            disabled={loading}
-            className="flex items-center gap-1.5 rounded-md bg-[var(--stem)] px-3 py-1.5 text-white text-xs font-medium hover:opacity-90 disabled:opacity-50"
-          >
-            {loading ? <RefreshCw size={12} className="animate-spin" /> : <Zap size={12} />}
-            {loading ? "Scanning" : "Scan"}
-          </button>
-        </div>
-      </div>
+  const visibleSignals = signals.filter(s => {
+    const sc = SCANNERS.find(x => x.key === s.strategyKey);
+    if (sc && !enabled.has(sc.key)) return false;
+    return true;
+  });
 
-      {/* ─── Tab bar ─── */}
-      <div className="flex items-center gap-1 border-b border-[var(--rule)] overflow-x-auto mb-6">
-        {TABS.map(t => {
-          const active = tab === t;
-          return (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={cn(
-                "px-4 py-2 text-sm font-serif uppercase tracking-[0.12em] whitespace-nowrap border-b-2 -mb-px transition-colors",
-                active
-                  ? "text-[var(--ink)] border-[var(--stem)]"
-                  : "text-[var(--ink-2)] border-transparent hover:text-[var(--ink)]"
-              )}
-            >
-              {t}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* ─── Tab content ─── */}
-      {tab === "Live" && <LiveTab signals={signals} loading={loading} />}
-      {tab === "Validated" && <ValidatedTab />}
-      {tab === "Prop Firm" && <PropFirmTab />}
-
-      <hr className="pepy-section-divider mt-12" />
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Live tab — signal stream
-// ═══════════════════════════════════════════════════════════════════════════
-
-function LiveTab({ signals, loading }: { signals: ScanSignal[]; loading: boolean }) {
-  if (loading && signals.length === 0) {
-    return (
-      <div className="space-y-2">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Skeleton key={i} className="h-12 w-full rounded-md" />
-        ))}
-      </div>
-    );
-  }
-
-  if (signals.length === 0) {
-    return (
-      <div className="rounded-lg border border-[var(--rule)] bg-[var(--paper)] py-16 text-center">
-        <Radio className="h-8 w-8 mx-auto mb-3 text-[var(--ink-2)] opacity-30" />
-        <p className="pepy-body-serif">No signals right now. The scanner is watching.</p>
-      </div>
-    );
-  }
-
-  // Group by direction
-  const longs = signals.filter(s => s.direction === "long");
-  const shorts = signals.filter(s => s.direction === "short");
+  const longCount = visibleSignals.filter(s => s.direction === "long").length;
+  const shortCount = visibleSignals.filter(s => s.direction === "short").length;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      {/* Long signals */}
-      <div>
-        <div className="flex items-baseline gap-2 mb-3">
-          <ArrowUpRight size={14} className="text-[var(--stem)]" />
-          <span className="pepy-label">Long Signals</span>
-          <span className="pepy-label text-[var(--ink-2)] opacity-60">{longs.length}</span>
-        </div>
-        <div className="space-y-1">
-          {longs.map((sig, i) => <SignalRow key={i} signal={sig} />)}
-        </div>
-      </div>
+    <div className="min-h-screen" style={{ background: "var(--paper)" }}>
+      <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6">
 
-      {/* Short signals */}
-      <div>
-        <div className="flex items-baseline gap-2 mb-3">
-          <ArrowDownRight size={14} className="text-rose-500" />
-          <span className="pepy-label">Short Signals</span>
-          <span className="pepy-label text-[var(--ink-2)] opacity-60">{shorts.length}</span>
-        </div>
-        <div className="space-y-1">
-          {shorts.map((sig, i) => <SignalRow key={i} signal={sig} />)}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SignalRow({ signal }: { signal: ScanSignal }) {
-  const isLong = signal.direction === "long";
-  const validated = SCANNERS.some(s => s.key === signal.strategyKey);
-
-  return (
-    <div className="flex items-center gap-3 rounded-md border border-[var(--rule)] bg-[var(--paper)] px-3 py-2 hover:bg-[var(--paper-2)] transition-colors">
-      {/* Direction */}
-      <span className={cn("text-xs font-mono font-bold uppercase w-10", isLong ? "text-[var(--stem)]" : "text-rose-500")}>
-        {signal.direction}
-      </span>
-
-      {/* Symbol */}
-      <span className="pepy-value text-sm min-w-[100px]">{signal.display}</span>
-
-      {/* Timeframe */}
-      <span className="pepy-label text-[var(--ink-2)]">{signal.timeframe.toUpperCase()}</span>
-
-      {/* Strategy */}
-      <span className="text-xs text-[var(--ink-2)] truncate flex-1 min-w-0">{signal.strategyKey.replace(/^(trend|ict|ea|community|horc|channel)-/, "")}</span>
-
-      {/* Validated badge */}
-      {validated && (
-        <span className="flex items-center gap-0.5 text-[var(--stem)]">
-          <Check size={10} />
-        </span>
-      )}
-
-      {/* Grade */}
-      {signal.grade && (
-        <span className="pepy-label text-[var(--ink-2)]">{signal.grade}</span>
-      )}
-
-      {/* Score */}
-      <span className="pepy-value text-xs">{signal.score}</span>
-
-      {/* Entry price */}
-      {signal.entryPrice && (
-        <span className="pepy-value text-xs text-[var(--ink-2)]">{signal.entryPrice.toFixed(5)}</span>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Validated tab — handbook-passed scanners
-// ═══════════════════════════════════════════════════════════════════════════
-
-function ValidatedTab() {
-  const families = [...new Set(SCANNERS.map(s => s.family))];
-
-  return (
-    <div className="space-y-8">
-      <div>
-        <p className="pepy-subtitle m-0">
-          14 scanners passed the Kieran Duff systematic trading handbook rules
-          (≥4 of 6 tests). These are candidates for MT5 Strategy Tester validation.
-        </p>
-      </div>
-
-      {families.map(family => {
-        const scanners = SCANNERS.filter(s => s.family === family);
-        return (
-          <div key={family}>
-            {/* Section header */}
-            <div className="flex items-baseline gap-2 mb-3 pb-2 border-b border-[var(--rule)]">
-              <span className="pepy-label">{family}</span>
-              <span className="pepy-label text-[var(--ink-2)] opacity-60">{scanners.length} validated</span>
+        {/* ─── Header ─── */}
+        <header className="mb-8">
+          <div className="flex items-end justify-between">
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.15em] mb-2" style={{ color: "var(--ink-2)" }}>
+                Quant Scanner
+              </p>
+              <h1 className="font-serif text-4xl font-semibold tracking-tight" style={{ color: "var(--ink)" }}>
+                Signal Stream
+              </h1>
             </div>
 
-            {/* Scanner list */}
-            <div className="space-y-1">
-              {scanners.map(s => (
-                <div
-                  key={s.key}
-                  className="flex items-center gap-4 rounded-md border border-[var(--rule)] bg-[var(--paper)] px-4 py-2.5"
-                >
-                  <span className={cn(
-                    "pepy-label w-12",
-                    s.tier === "PERFECT" ? "text-[var(--stem)]" :
-                    s.tier === "GREAT" ? "text-blue-500" :
-                    "text-amber-500"
-                  )}>
-                    {s.tier}
+            {/* Status cluster */}
+            <div className="flex items-center gap-4">
+              {isLive && (
+                <span className="flex items-center gap-1.5">
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-pulse-dot rounded-full bg-emerald-500" />
                   </span>
-                  <span className="text-sm font-serif text-[var(--ink)] min-w-[160px]">{s.short}</span>
-                  <span className="pepy-label text-[var(--ink-2)] flex-1">{s.key}</span>
-                  <span className="pepy-value text-sm">{s.pass}</span>
-                  <Check size={14} className="text-[var(--stem)]" />
-                </div>
+                  <span className="font-mono text-[10px] font-semibold text-emerald-600">LIVE</span>
+                </span>
+              )}
+              {lastScan && (
+                <span className={cn("font-mono text-[10px]", secondsAgo > 90 ? "text-amber-500" : "")} style={{ color: secondsAgo > 90 ? undefined : "var(--ink-2)" }}>
+                  {secondsAgo < 60 ? `${secondsAgo}s` : `${Math.floor(secondsAgo / 60)}m ${secondsAgo % 60}s`}
+                </span>
+              )}
+              {killzone && (
+                <span className="flex items-center gap-1 font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>
+                  <Clock size={11} />
+                  {killzone}
+                </span>
+              )}
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <Switch checked={autoScan} onCheckedChange={setAutoScan} />
+                <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>AUTO</span>
+              </label>
+              <button
+                onClick={() => runScan(false)}
+                disabled={loading}
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                style={{ background: "var(--stem)" }}
+              >
+                {loading ? <Activity size={12} className="animate-pulse" /> : <Zap size={12} />}
+                {loading ? "Scanning" : "Scan"}
+              </button>
+            </div>
+          </div>
+
+          {/* Quick stats */}
+          <div className="mt-4 flex items-center gap-6">
+            <div className="flex items-center gap-1.5">
+              <ArrowUp size={14} className="text-emerald-600" />
+              <span className="font-mono text-sm font-bold text-emerald-600">{longCount}</span>
+              <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>LONG</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <ArrowDown size={14} className="text-rose-600" />
+              <span className="font-mono text-sm font-bold text-rose-600">{shortCount}</span>
+              <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>SHORT</span>
+            </div>
+            <div className="h-4 w-px" style={{ background: "var(--rule)" }} />
+            <div className="flex items-center gap-1.5">
+              <Radio size={14} style={{ color: "var(--ink-2)" }} />
+              <span className="font-mono text-sm font-bold" style={{ color: "var(--ink)" }}>{visibleSignals.length}</span>
+              <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>SIGNALS</span>
+            </div>
+          </div>
+        </header>
+
+        {/* ─── Scanner toggles ─── */}
+        <section className="mb-6">
+          <p className="font-mono text-[10px] uppercase tracking-[0.12em] mb-3" style={{ color: "var(--ink-2)" }}>
+            Active Scanners · {enabled.size}/{SCANNERS.length}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {SCANNERS.map(s => {
+              const on = enabled.has(s.key);
+              return (
+                <button
+                  key={s.key}
+                  onClick={() => {
+                    const next = new Set(enabled);
+                    if (next.has(s.key)) next.delete(s.key); else next.add(s.key);
+                    setEnabled(next);
+                  }}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition-all",
+                    on ? cn(TIER_COLORS[s.tier]) : "border-transparent opacity-30 hover:opacity-60"
+                  )}
+                  style={!on ? { background: "var(--paper-2)" } : undefined}
+                >
+                  <span className="h-1.5 w-1.5 rounded-full" style={{ background: s.color }} />
+                  <span className="font-medium">{s.name}</span>
+                  <span className="font-mono text-[9px] opacity-60">{s.pass}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* ─── Signal stream ─── */}
+        <section className="mb-12">
+          {loading && visibleSignals.length === 0 ? (
+            <div className="space-y-1.5">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="h-14 rounded-lg shimmer" />
               ))}
             </div>
+          ) : visibleSignals.length === 0 ? (
+            <div className="rounded-xl border p-16 text-center" style={{ borderColor: "var(--rule)" }}>
+              <Radio className="h-10 w-10 mx-auto mb-4 opacity-20" style={{ color: "var(--ink-2)" }} />
+              <p className="font-serif text-lg italic" style={{ color: "var(--ink-2)" }}>
+                No signals right now.
+              </p>
+              <p className="font-mono text-[10px] mt-2" style={{ color: "var(--ink-2)" }}>
+                The scanner is watching. Signals appear here when setups form.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {visibleSignals
+                .sort((a, b) => b.score - a.score)
+                .map((sig, i) => <SignalCard key={i} signal={sig} />)}
+            </div>
+          )}
+        </section>
+
+        {/* ─── Validated scanners ─── */}
+        <section className="mb-12">
+          <div className="flex items-baseline gap-3 mb-4">
+            <Shield size={16} style={{ color: "var(--stem)" }} />
+            <h2 className="font-serif text-xl font-semibold" style={{ color: "var(--ink)" }}>
+              Validated Scanners
+            </h2>
+            <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>
+              14 passed handbook · MT5 candidates
+            </span>
           </div>
-        );
-      })}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {SCANNERS.map(s => (
+              <div
+                key={s.key}
+                className={cn(
+                  "rounded-lg border p-3 transition-all cursor-pointer",
+                  enabled.has(s.key) ? TIER_COLORS[s.tier] : "opacity-40"
+                )}
+                onClick={() => {
+                  const next = new Set(enabled);
+                  if (next.has(s.key)) next.delete(s.key); else next.add(s.key);
+                  setEnabled(next);
+                }}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="h-2 w-2 rounded-full" style={{ background: s.color }} />
+                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded border" style={{ borderColor: "var(--rule)" }}>
+                    {s.pass}
+                  </span>
+                </div>
+                <div className="font-serif text-sm font-medium" style={{ color: "var(--ink)" }}>
+                  {s.name}
+                </div>
+                <div className="flex items-center justify-between mt-1">
+                  <span className="font-mono text-[9px]" style={{ color: "var(--ink-2)" }}>{s.family}</span>
+                  <span className="font-mono text-[9px] font-bold" style={{ color: "var(--stem)" }}>{s.tier}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ─── Prop firm result ─── */}
+        <section className="mb-8">
+          <div className="flex items-baseline gap-3 mb-4">
+            <Target size={16} style={{ color: "var(--stem)" }} />
+            <h2 className="font-serif text-xl font-semibold" style={{ color: "var(--ink)" }}>
+              Prop Firm Combination
+            </h2>
+          </div>
+
+          <div className="rounded-xl border p-5" style={{ borderColor: "var(--rule)", background: "var(--paper-2)" }}>
+            <div className="flex items-center justify-between mb-4">
+              <p className="font-serif text-sm italic" style={{ color: "var(--ink-2)" }}>
+                Two scanners that individually fail can pass together — they lose on different days.
+              </p>
+              <span className="font-mono text-2xl font-bold text-emerald-600">70.4%</span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="flex-1 rounded-lg border p-3" style={{ borderColor: "var(--rule)", background: "var(--paper)" }}>
+                <div className="font-mono text-[9px] uppercase tracking-wider mb-1" style={{ color: "var(--ink-2)" }}>Scanner A</div>
+                <div className="font-serif text-sm font-medium" style={{ color: "var(--ink)" }}>Dual Donchian</div>
+                <div className="font-mono text-[10px] mt-0.5" style={{ color: "var(--ink-2)" }}>63.4% individual</div>
+              </div>
+              <span className="font-serif text-lg" style={{ color: "var(--ink-2)" }}>+</span>
+              <div className="flex-1 rounded-lg border p-3" style={{ borderColor: "var(--rule)", background: "var(--paper)" }}>
+                <div className="font-mono text-[9px] uppercase tracking-wider mb-1" style={{ color: "var(--ink-2)" }}>Scanner B</div>
+                <div className="font-serif text-sm font-medium" style={{ color: "var(--ink)" }}>SMC BOS s3</div>
+                <div className="font-mono text-[10px] mt-0.5" style={{ color: "var(--ink-2)" }}>61.7% individual</div>
+              </div>
+              <span className="font-serif text-lg" style={{ color: "var(--ink-2)" }}>→</span>
+              <div className="flex-1 rounded-lg border p-3" style={{ borderColor: "var(--stem)", background: "hsl(161 91% 30% / 0.05)" }}>
+                <div className="font-mono text-[9px] uppercase tracking-wider mb-1 text-emerald-600">Combined</div>
+                <div className="font-serif text-sm font-bold text-emerald-700">70.4% pass</div>
+                <div className="font-mono text-[10px] mt-0.5 text-emerald-600">+7.8% synergy</div>
+              </div>
+            </div>
+
+            <div className="mt-4 pt-4 border-t flex items-center gap-6" style={{ borderColor: "var(--rule)" }}>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={14} className="text-emerald-600" />
+                <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>$50K account</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Target size={14} style={{ color: "var(--ink-2)" }} />
+                <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>$3K target</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Shield size={14} style={{ color: "var(--ink-2)" }} />
+                <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>$2K trailing DD</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Layers size={14} style={{ color: "var(--ink-2)" }} />
+                <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>50% consistency</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Prop Firm tab — combination optimizer result
-// ═══════════════════════════════════════════════════════════════════════════
+// ─── Signal card ──────────────────────────────────────────────────────────
 
-function PropFirmTab() {
+function SignalCard({ signal }: { signal: ScanSignal }) {
+  const isLong = signal.direction === "long";
+  const scanner = SCANNERS.find(s => s.key === signal.strategyKey);
+
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <p className="pepy-subtitle m-0">
-          Two scanners that individually fail a prop challenge can pass together
-          because they lose on different days. The prop firm grades your path, not your P&L.
-        </p>
+    <div
+      className="animate-slide-in flex items-center gap-3 rounded-lg border p-3 transition-all hover:shadow-sm"
+      style={{
+        borderColor: isLong ? "hsl(161 91% 30% / 0.2)" : "hsl(0 72% 51% / 0.2)",
+        background: isLong ? "hsl(161 91% 30% / 0.03)" : "hsl(0 72% 51% / 0.03)",
+      }}
+    >
+      {/* Direction icon */}
+      <div
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+        style={{ background: isLong ? "hsl(161 91% 30% / 0.1)" : "hsl(0 72% 51% / 0.1)" }}
+      >
+        {isLong
+          ? <ArrowUp size={16} className="text-emerald-600" />
+          : <ArrowDown size={16} className="text-rose-600" />}
       </div>
 
-      {/* Best combination */}
-      <div className="rounded-lg border border-[var(--rule)] bg-[var(--paper)] p-6">
-        <div className="flex items-baseline justify-between mb-4">
-          <span className="pepy-label">Best Combination</span>
-          <span className="pepy-value text-2xl text-[var(--stem)]">70.4%</span>
-        </div>
+      {/* Symbol + TF */}
+      <div className="shrink-0 min-w-[100px]">
+        <div className="font-serif text-sm font-medium" style={{ color: "var(--ink)" }}>{signal.display}</div>
+        <div className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>{signal.timeframe.toUpperCase()}</div>
+      </div>
 
-        <div className="flex items-center gap-4">
-          {/* Scanner 1 */}
-          <div className="flex-1 rounded-md border border-[var(--rule)] p-4">
-            <div className="pepy-label mb-1">Scanner A</div>
-            <div className="text-sm font-serif text-[var(--ink)]">Dual Donchian Channel</div>
-            <div className="pepy-value text-xs text-[var(--ink-2)] mt-1">63.4% individual pass</div>
-          </div>
-
-          {/* Plus */}
-          <span className="pepy-heading-md text-[var(--ink-2)]">+</span>
-
-          {/* Scanner 2 */}
-          <div className="flex-1 rounded-md border border-[var(--rule)] p-4">
-            <div className="pepy-label mb-1">Scanner B</div>
-            <div className="text-sm font-serif text-[var(--ink)]">SMC BOS/CHoCH s3</div>
-            <div className="pepy-value text-xs text-[var(--ink-2)] mt-1">61.7% individual pass</div>
-          </div>
-
-          {/* Result */}
-          <div className="flex-1 rounded-md border border-[var(--stem)] bg-[var(--stem)]/5 p-4">
-            <div className="pepy-label mb-1 text-[var(--stem)]">Combined</div>
-            <div className="text-sm font-serif text-[var(--ink)]">70.4% pass rate</div>
-            <div className="pepy-value text-xs text-[var(--stem)] mt-1">+7.8% synergy</div>
-          </div>
-        </div>
-
-        <div className="mt-4 pt-4 border-t border-[var(--rule)]">
-          <p className="pepy-body-serif m-0">
-            The Donchian channel catches trend breakouts with a different loss profile
-            than SMC BOS/CHoCH. They lose on different days — crash days cancel out.
-            Combined pass rate exceeds either scanner individually.
-          </p>
+      {/* Scanner name */}
+      <div className="hidden sm:block shrink-0 min-w-[120px]">
+        <div className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>
+          {scanner?.name ?? signal.strategyKey.replace(/^(trend|ict|ea|community|horc|channel)-/, "")}
         </div>
       </div>
 
-      {/* Rules */}
-      <div className="rounded-lg border border-[var(--rule)] bg-[var(--paper)] p-6">
-        <span className="pepy-label">LucidFlex 50K Rules</span>
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="flex items-baseline gap-2">
-            <span className="pepy-value">$50,000</span>
-            <span className="pepy-label">Account</span>
+      {/* Score bar */}
+      <div className="flex items-center gap-2 shrink-0">
+        <div className="h-1.5 w-16 rounded-full overflow-hidden" style={{ background: "var(--rule)" }}>
+          <div
+            className="h-full rounded-full transition-all"
+            style={{
+              width: `${signal.score}%`,
+              background: signal.score >= 70 ? "var(--stem)" : signal.score >= 50 ? "var(--copper)" : "var(--loss)",
+            }}
+          />
+        </div>
+        <span className="font-mono text-[10px] w-6" style={{ color: "var(--ink-2)" }}>{signal.score}</span>
+      </div>
+
+      {/* Entry/Stop/Target */}
+      {signal.entryPrice && (
+        <div className="hidden md:flex items-center gap-4 ml-auto shrink-0">
+          <div className="text-right">
+            <div className="font-mono text-[8px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>Entry</div>
+            <div className="font-mono text-xs" style={{ color: "var(--ink)" }}>{signal.entryPrice.toFixed(5)}</div>
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="pepy-value">$3,000</span>
-            <span className="pepy-label">Profit Target</span>
+          <div className="text-right">
+            <div className="font-mono text-[8px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>Stop</div>
+            <div className="font-mono text-xs text-rose-600">{signal.stopPrice?.toFixed(5) ?? "—"}</div>
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="pepy-value">$2,000</span>
-            <span className="pepy-label">Trailing Drawdown</span>
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="pepy-value">50%</span>
-            <span className="pepy-label">Consistency Rule</span>
+          <div className="text-right">
+            <div className="font-mono text-[8px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>Target</div>
+            <div className="font-mono text-xs text-emerald-600">{signal.targetPrice?.toFixed(5) ?? "—"}</div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -1,14 +1,21 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, monospace;
+  --font-serif: var(--font-serif), ui-serif, Georgia, serif;
+
+  --color-paper: hsl(40 33% 98%);
+  --color-paper-2: hsl(40 33% 95%);
+  --color-ink: hsl(20 14% 12%);
+  --color-ink-2: hsl(20 14% 45%);
+  --color-stem: hsl(161 91% 30%);
+  --color-rule: hsl(40 33% 88%);
+  --color-loss: hsl(0 72% 51%);
+  --color-copper: hsl(28 80% 52%);
+}
+
 :root {
-  --background: 40 33% 98%;
-  --foreground: 20 14% 12%;
-  --primary: 161 91% 30%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 40 33% 95%;
-  --muted: 40 33% 92%;
-  --muted-foreground: 20 14% 45%;
-  --border: 40 33% 88%;
   --paper: hsl(40 33% 98%);
   --paper-2: hsl(40 33% 95%);
   --ink: hsl(20 14% 12%);
@@ -16,66 +23,46 @@
   --stem: hsl(161 91% 30%);
   --rule: hsl(40 33% 88%);
   --loss: hsl(0 72% 51%);
-  --loss-bg: hsl(0 72% 96%);
   --copper: hsl(28 80% 52%);
 }
 
-body { background: var(--paper); color: var(--ink); }
+* { border-color: var(--rule); }
 
-/* pepy design system */
-.pepy-heading-lg {
-  font-size: clamp(28px, 3.5vw, 40px);
-  font-weight: 600;
-  line-height: 1.08;
-  letter-spacing: -0.01em;
+body {
+  background: var(--paper);
   color: var(--ink);
+  font-family: var(--font-inter), system-ui, sans-serif;
 }
-.pepy-heading-md {
-  font-size: clamp(20px, 2.5vw, 28px);
-  font-weight: 600;
-  line-height: 1.15;
-  letter-spacing: -0.01em;
-  color: var(--ink);
+
+/* ── Typography ── */
+.font-serif { font-family: var(--font-serif), Georgia, serif; }
+.font-mono { font-family: var(--font-mono), ui-monospace, monospace; }
+
+/* ── Animations ── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.2); }
 }
-.pepy-subtitle {
-  font-style: italic;
-  font-size: clamp(18px, 2vw, 22px);
-  line-height: 1.35;
-  color: var(--ink-2);
+.animate-pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+
+@keyframes slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-.pepy-body-serif {
-  font-size: 15px;
-  line-height: 1.55;
-  color: var(--ink-2);
+.animate-slide-in { animation: slide-in 0.3s ease-out; }
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
-.pepy-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  line-height: 1;
-  color: var(--ink-2);
+.shimmer {
+  background: linear-gradient(90deg, var(--paper-2) 25%, var(--paper) 50%, var(--paper-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
 }
-.pepy-value {
-  font-size: 15px;
-  line-height: 1;
-  color: var(--ink);
-}
-.pepy-section-divider {
-  border: none;
-  border-top: 1px solid var(--rule);
-  margin: 2rem 0;
-}
-.pepy-btn-primary {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  border-radius: 0.375rem;
-  background: var(--stem);
-  color: white;
-  font-size: 12px;
-  font-weight: 500;
-  padding: 0.375rem 0.75rem;
-  transition: opacity 0.15s;
-}
-.pepy-btn-primary:hover { opacity: 0.9; }
-.pepy-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-2); }
