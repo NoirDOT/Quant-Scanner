@@ -10,7 +10,7 @@ import {
   type AssetClass,
   type Instrument,
 } from "@/lib/scanner/instruments";
-import { getCandles } from "@/lib/scanner/data";
+import { getCandlesLive } from "@/lib/scanner/data";
 import { anyFilterMatches } from "@/lib/scanner/filters";
 import { TREND_SCANNERS, TREND_STRATEGIES, runTrendScan } from "@/lib/scanner/strategies/trend";
 import { ICT_SCANNERS, ICT_STRATEGIES, runICTScan, model2022Scanner } from "@/lib/scanner/strategies/ict";
@@ -79,11 +79,14 @@ export async function POST(req: NextRequest) {
   instruments = instruments.slice(0, 50);
 
   const allSignals: ScanSignal[] = [];
+  const livePrices: Record<string, number | null> = {};
+  let anyLive = false;
 
   for (const inst of instruments) {
     for (const tf of tfList) {
-      const candles = await getCandles(inst.symbol, tf);
+      const { candles, livePrice, source } = await getCandlesLive(inst.symbol, tf);
       if (candles.length < 30) continue;
+      if (livePrice != null) { livePrices[inst.symbol] = livePrice; anyLive = true; }
 
       // Layer 2 pre-filter (4-layer architecture)
       if (filterKeys && Array.isArray(filterKeys) && filterKeys.length > 0) {

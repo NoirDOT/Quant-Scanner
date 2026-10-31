@@ -209,3 +209,52 @@ export function clearCache(symbol?: string, tf?: Timeframe) {
     }
   }
 }
+
+// ─── LIVE DATA LAYER ─────────────────────────────────────────────────────
+// Overlays the CURRENT Yahoo Finance quote onto the last candle so every
+// scan evaluates the actual live market price, not a stale bar close.
+
+const liveCache = new Map<string, { ts: number; data: Candle[]; livePrice: number | null }>();
+
+function liveTtlFor(tf: Timeframe): number {
+  if (tf === "1h" || tf === "2h" || tf === "4h") return 15 * 1000;  // 15s
+  if (tf === "1d") return 30 * 1000;                                 // 30s
+  return 60 * 1000;                                                  // 60s
+}
+
+export async function getCandlesLive(
+  symbol: string,
+  tf: Timeframe,
+  lookback: number = LOOKBACK_BARS[tf]
+): Promise<{ candles: Candle[]; livePrice: number | null; source: "live" | "stale" }> {
+  const cacheKey = `${symbol}:${tf}:live`;
+  const cached = liveCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < liveTtlFor(tf)) {
+    return { candles: cached.data, livePrice: cached.livePrice, source: "live" };
+  }
+
+  const candles = await getCandles(symbol, tf, lookback);
+  if (candles.length === 0) return { candles: [], livePrice: null, source: "stale" };
+
+  const livePrice = await getCurrentPrice(symbol);
+
+  let finalCandles = candles;
+  if (livePrice != null && Number.isFinite(livePrice) && livePrice > 0) {
+    finalCandles = candles.slice();
+    const last = { ...finalCandles[finalCandles.length - 1] };
+    last.close = livePrice;
+    last.high = Math.max(last.high, livePrice);
+    last.low = Math.min(last.low, livePrice);
+    finalCandles[finalCandles.length - 1] = last;
+  }
+
+  liveCache.set(cacheKey, { ts: Date.now(), data: finalCandles, livePrice });
+
+  return { candles: finalCandles, livePrice, source: livePrice != null ? "live" : "stale" };
+}
+
+export function clearLiveCache(symbol?: string, tf?: Timeframe) {
+  if (!symbol) { liveCache.clear(); return; }
+  if (tf) { liveCache.delete(`${symbol}:${tf}:live`); }
+  else { for (const key of Array.from(liveCache.keys())) { if (key.startsWith(`${symbol}:`)) liveCache.delete(key); } }
+}
