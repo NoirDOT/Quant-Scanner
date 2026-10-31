@@ -33,10 +33,24 @@ const TIER_COLORS: Record<string, string> = {
   OK: "border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400",
 };
 
+// Timeframe-aware cadence:
+//   1h bars close every hour → check every 5 min (catch intrabar moves)
+//   4h bars close every 4 hours → check every 15 min
+//   1d bars close once a day → check every 60 min
+// We scan all TFs each poll, but the data cache ensures we don't refetch
+// until the cache TTL expires (5min for 4h, 30min for 1d, 60min for 1w).
+// So even though we poll every 5 min, 1d signals only update every 30 min.
+const SCAN_INTERVALS = {
+  fast: 5 * 60 * 1000,    // 5 min — catches 1h bar moves
+  medium: 15 * 60 * 1000,  // 15 min — balanced for 4h
+  slow: 60 * 60 * 1000,    // 60 min — daily only
+};
+
 export function IctScannerPage() {
   const [signals, setSignals] = useState<ScanSignal[]>([]);
   const [loading, setLoading] = useState(false);
   const [autoScan, setAutoScan] = useState(true);
+  const [scanInterval, setScanInterval] = useState<"fast" | "medium" | "slow">("medium");
   const [lastScan, setLastScan] = useState<Date | null>(null);
   const [secondsAgo, setSecondsAgo] = useState(0);
   const [isLive, setIsLive] = useState(false);
@@ -44,10 +58,7 @@ export function IctScannerPage() {
   const [enabled, setEnabled] = useState<Set<string>>(new Set(SCANNERS.map(s => s.key)));
   const [dark, setDark] = useState(false);
 
-  // Theme
-  useEffect(() => {
-    setDark(document.documentElement.classList.contains("dark"));
-  }, []);
+  useEffect(() => { setDark(document.documentElement.classList.contains("dark")); }, []);
   const toggleTheme = () => {
     const isDark = document.documentElement.classList.toggle("dark");
     setDark(isDark);
@@ -60,7 +71,8 @@ export function IctScannerPage() {
       const res = await fetch("/api/scanner", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ strategyType: "all", timeframes: ["4h", "1d"], minScore: 50 }),
+        // Scan all timeframes — the data cache handles freshness per TF
+        body: JSON.stringify({ strategyType: "all", timeframes: ["1h", "4h", "1d"], minScore: 50, dispatch: true }),
       });
       const json = await res.json();
       setSignals(json.signals ?? []);
@@ -73,14 +85,17 @@ export function IctScannerPage() {
   useEffect(() => { void runScan(true); }, [runScan]);
 
   const runScanRef = useRef(runScan);
+  const intervalRef = useRef(scanInterval);
   useEffect(() => { runScanRef.current = runScan; });
+  useEffect(() => { intervalRef.current = scanInterval; });
   useEffect(() => {
     if (!autoScan) return;
+    const ms = SCAN_INTERVALS[intervalRef.current];
     const id = setInterval(() => {
       if (!document.hidden) void runScanRef.current(true);
-    }, 60_000);
+    }, ms);
     return () => clearInterval(id);
-  }, [autoScan]);
+  }, [autoScan, scanInterval]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -100,9 +115,9 @@ export function IctScannerPage() {
     if (sc && !enabled.has(sc.key)) return false;
     return true;
   });
-
   const longCount = visibleSignals.filter(s => s.direction === "long").length;
   const shortCount = visibleSignals.filter(s => s.direction === "short").length;
+  const intervalLabel = scanInterval === "fast" ? "5m" : scanInterval === "medium" ? "15m" : "60m";
 
   return (
     <div className="min-h-screen" style={{ background: "var(--paper)" }}>
@@ -112,20 +127,13 @@ export function IctScannerPage() {
         <header className="mb-8">
           <div className="flex items-end justify-between">
             <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.15em] mb-2" style={{ color: "var(--ink-2)" }}>
-                Quant Scanner
-              </p>
-              <h1 className="font-serif text-4xl font-semibold tracking-tight" style={{ color: "var(--ink)" }}>
-                Signal Stream
-              </h1>
+              <p className="font-mono text-[10px] uppercase tracking-[0.15em] mb-2" style={{ color: "var(--ink-2)" }}>Quant Scanner</p>
+              <h1 className="font-serif text-4xl font-semibold tracking-tight" style={{ color: "var(--ink)" }}>Signal Stream</h1>
             </div>
-
             <div className="flex items-center gap-4">
               {isLive && (
                 <span className="flex items-center gap-1.5">
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-pulse-dot rounded-full bg-emerald-500" />
-                  </span>
+                  <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-pulse-dot rounded-full bg-emerald-500" /></span>
                   <span className="font-mono text-[10px] font-semibold text-emerald-500">LIVE</span>
                 </span>
               )}
@@ -136,10 +144,21 @@ export function IctScannerPage() {
               )}
               {killzone && (
                 <span className="flex items-center gap-1 font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>
-                  <Clock size={11} />
-                  {killzone}
+                  <Clock size={11} />{killzone}
                 </span>
               )}
+              {/* Cadence selector */}
+              <div className="flex items-center gap-1 rounded-lg border" style={{ borderColor: "var(--rule)" }}>
+                {(["fast", "medium", "slow"] as const).map(v => (
+                  <button key={v} onClick={() => setScanInterval(v)}
+                    className={cn("px-2 py-1 text-[10px] font-mono rounded transition-colors",
+                      scanInterval === v ? "text-white" : "hover:opacity-70")}
+                    style={{ background: scanInterval === v ? "var(--stem)" : "transparent", color: scanInterval === v ? "white" : "var(--ink-2)" }}
+                  >
+                    {v === "fast" ? "5m" : v === "medium" ? "15m" : "60m"}
+                  </button>
+                ))}
+              </div>
               <label className="flex items-center gap-1.5 cursor-pointer">
                 <Switch checked={autoScan} onCheckedChange={setAutoScan} />
                 <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>AUTO</span>
@@ -147,12 +166,9 @@ export function IctScannerPage() {
               <button onClick={toggleTheme} className="p-1.5 rounded-lg transition-colors hover:opacity-80" style={{ color: "var(--ink-2)" }}>
                 {dark ? <Sun size={16} /> : <Moon size={16} />}
               </button>
-              <button
-                onClick={() => runScan(false)}
-                disabled={loading}
+              <button onClick={() => runScan(false)} disabled={loading}
                 className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-                style={{ background: "var(--stem)" }}
-              >
+                style={{ background: "var(--stem)" }}>
                 {loading ? <Activity size={12} className="animate-pulse" /> : <Zap size={12} />}
                 {loading ? "Scanning" : "Scan"}
               </button>
@@ -160,21 +176,13 @@ export function IctScannerPage() {
           </div>
 
           <div className="mt-4 flex items-center gap-6">
-            <div className="flex items-center gap-1.5">
-              <ArrowUp size={14} className="text-emerald-500" />
-              <span className="font-mono text-sm font-bold text-emerald-500">{longCount}</span>
-              <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>LONG</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <ArrowDown size={14} className="text-rose-500" />
-              <span className="font-mono text-sm font-bold text-rose-500">{shortCount}</span>
-              <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>SHORT</span>
-            </div>
+            <div className="flex items-center gap-1.5"><ArrowUp size={14} className="text-emerald-500" /><span className="font-mono text-sm font-bold text-emerald-500">{longCount}</span><span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>LONG</span></div>
+            <div className="flex items-center gap-1.5"><ArrowDown size={14} className="text-rose-500" /><span className="font-mono text-sm font-bold text-rose-500">{shortCount}</span><span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>SHORT</span></div>
             <div className="h-4 w-px" style={{ background: "var(--rule)" }} />
-            <div className="flex items-center gap-1.5">
-              <Radio size={14} style={{ color: "var(--ink-2)" }} />
-              <span className="font-mono text-sm font-bold" style={{ color: "var(--ink)" }}>{visibleSignals.length}</span>
-              <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>SIGNALS</span>
+            <div className="flex items-center gap-1.5"><Radio size={14} style={{ color: "var(--ink-2)" }} /><span className="font-mono text-sm font-bold" style={{ color: "var(--ink)" }}>{visibleSignals.length}</span><span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>SIGNALS</span></div>
+            <div className="h-4 w-px" style={{ background: "var(--rule)" }} />
+            <div className="flex items-center gap-1.5 font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>
+              <Clock size={11} /> polls every {intervalLabel} · 1h/4h/1d
             </div>
           </div>
         </header>
@@ -188,19 +196,9 @@ export function IctScannerPage() {
             {SCANNERS.map(s => {
               const on = enabled.has(s.key);
               return (
-                <button
-                  key={s.key}
-                  onClick={() => {
-                    const next = new Set(enabled);
-                    if (next.has(s.key)) next.delete(s.key); else next.add(s.key);
-                    setEnabled(next);
-                  }}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition-all",
-                    on ? cn(TIER_COLORS[s.tier]) : "opacity-30 hover:opacity-60"
-                  )}
-                  style={!on ? { background: "var(--paper-2)", borderColor: "var(--rule)" } : undefined}
-                >
+                <button key={s.key} onClick={() => { const next = new Set(enabled); if (next.has(s.key)) next.delete(s.key); else next.add(s.key); setEnabled(next); }}
+                  className={cn("flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition-all", on ? cn(TIER_COLORS[s.tier]) : "opacity-30 hover:opacity-60")}
+                  style={!on ? { background: "var(--paper-2)", borderColor: "var(--rule)" } : undefined}>
                   <span className="h-1.5 w-1.5 rounded-full" style={{ background: s.color }} />
                   <span className="font-medium">{s.name}</span>
                   <span className="font-mono text-[9px] opacity-60">{s.pass}</span>
@@ -213,27 +211,15 @@ export function IctScannerPage() {
         {/* Signal stream */}
         <section className="mb-12">
           {loading && visibleSignals.length === 0 ? (
-            <div className="space-y-1.5">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="h-14 rounded-lg shimmer" />
-              ))}
-            </div>
+            <div className="space-y-1.5">{Array.from({ length: 4 }).map((_, i) => (<div key={i} className="h-14 rounded-lg shimmer" />))}</div>
           ) : visibleSignals.length === 0 ? (
             <div className="rounded-xl border p-16 text-center" style={{ borderColor: "var(--rule)" }}>
               <Radio className="h-10 w-10 mx-auto mb-4 opacity-20" style={{ color: "var(--ink-2)" }} />
-              <p className="font-serif text-lg italic" style={{ color: "var(--ink-2)" }}>
-                No signals right now.
-              </p>
-              <p className="font-mono text-[10px] mt-2" style={{ color: "var(--ink-2)" }}>
-                The scanner is watching. Signals appear here when setups form.
-              </p>
+              <p className="font-serif text-lg italic" style={{ color: "var(--ink-2)" }}>No signals right now.</p>
+              <p className="font-mono text-[10px] mt-2" style={{ color: "var(--ink-2)" }}>The scanner is watching. Signals appear here when setups form.</p>
             </div>
           ) : (
-            <div className="space-y-1.5">
-              {visibleSignals
-                .sort((a, b) => b.score - a.score)
-                .map((sig, i) => <SignalCard key={i} signal={sig} />)}
-            </div>
+            <div className="space-y-1.5">{visibleSignals.sort((a, b) => b.score - a.score).map((sig, i) => <SignalCard key={i} signal={sig} />)}</div>
           )}
         </section>
 
@@ -241,32 +227,16 @@ export function IctScannerPage() {
         <section className="mb-12">
           <div className="flex items-baseline gap-3 mb-4">
             <Shield size={16} style={{ color: "var(--stem)" }} />
-            <h2 className="font-serif text-xl font-semibold" style={{ color: "var(--ink)" }}>
-              Validated Scanners
-            </h2>
-            <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>
-              14 passed handbook · MT5 candidates
-            </span>
+            <h2 className="font-serif text-xl font-semibold" style={{ color: "var(--ink)" }}>Validated Scanners</h2>
+            <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>14 passed handbook · MT5 candidates</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {SCANNERS.map(s => (
-              <div
-                key={s.key}
-                className={cn(
-                  "rounded-lg border p-3 transition-all cursor-pointer",
-                  enabled.has(s.key) ? TIER_COLORS[s.tier] : "opacity-40"
-                )}
-                onClick={() => {
-                  const next = new Set(enabled);
-                  if (next.has(s.key)) next.delete(s.key); else next.add(s.key);
-                  setEnabled(next);
-                }}
-              >
+              <div key={s.key} className={cn("rounded-lg border p-3 transition-all cursor-pointer", enabled.has(s.key) ? TIER_COLORS[s.tier] : "opacity-40")}
+                onClick={() => { const next = new Set(enabled); if (next.has(s.key)) next.delete(s.key); else next.add(s.key); setEnabled(next); }}>
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="h-2 w-2 rounded-full" style={{ background: s.color }} />
-                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded border" style={{ borderColor: "var(--rule)" }}>
-                    {s.pass}
-                  </span>
+                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded border" style={{ borderColor: "var(--rule)" }}>{s.pass}</span>
                 </div>
                 <div className="font-serif text-sm font-medium" style={{ color: "var(--ink)" }}>{s.name}</div>
                 <div className="flex items-center justify-between mt-1">
@@ -282,15 +252,11 @@ export function IctScannerPage() {
         <section className="mb-8">
           <div className="flex items-baseline gap-3 mb-4">
             <Target size={16} style={{ color: "var(--stem)" }} />
-            <h2 className="font-serif text-xl font-semibold" style={{ color: "var(--ink)" }}>
-              Prop Firm Combination
-            </h2>
+            <h2 className="font-serif text-xl font-semibold" style={{ color: "var(--ink)" }}>Prop Firm Combination</h2>
           </div>
           <div className="rounded-xl border p-5" style={{ borderColor: "var(--rule)", background: "var(--paper-2)" }}>
             <div className="flex items-center justify-between mb-4">
-              <p className="font-serif text-sm italic" style={{ color: "var(--ink-2)" }}>
-                Two scanners that individually fail can pass together — they lose on different days.
-              </p>
+              <p className="font-serif text-sm italic" style={{ color: "var(--ink-2)" }}>Two scanners that individually fail can pass together — they lose on different days.</p>
               <span className="font-mono text-2xl font-bold text-emerald-500">70.4%</span>
             </div>
             <div className="flex items-center gap-3">
@@ -329,13 +295,8 @@ function SignalCard({ signal }: { signal: ScanSignal }) {
   const isLong = signal.direction === "long";
   const scanner = SCANNERS.find(s => s.key === signal.strategyKey);
   return (
-    <div
-      className="animate-slide-in flex items-center gap-3 rounded-lg border p-3 transition-all hover:shadow-sm"
-      style={{
-        borderColor: isLong ? "hsl(161 91% 30% / 0.2)" : "hsl(0 72% 51% / 0.2)",
-        background: isLong ? "hsl(161 91% 30% / 0.03)" : "hsl(0 72% 51% / 0.03)",
-      }}
-    >
+    <div className="animate-slide-in flex items-center gap-3 rounded-lg border p-3 transition-all hover:shadow-sm"
+      style={{ borderColor: isLong ? "hsl(161 91% 30% / 0.2)" : "hsl(0 72% 51% / 0.2)", background: isLong ? "hsl(161 91% 30% / 0.03)" : "hsl(0 72% 51% / 0.03)" }}>
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ background: isLong ? "hsl(161 91% 30% / 0.1)" : "hsl(0 72% 51% / 0.1)" }}>
         {isLong ? <ArrowUp size={16} className="text-emerald-500" /> : <ArrowDown size={16} className="text-rose-500" />}
       </div>
