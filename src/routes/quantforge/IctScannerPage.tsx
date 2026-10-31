@@ -7,10 +7,8 @@ import { Switch } from "@/components/ui/switch";
 import type { ScanSignal } from "@/lib/scanner/types";
 import {
   Activity, Clock, ArrowUp, ArrowDown, Zap, Radio,
-  TrendingUp, Target, Shield, Layers, CheckCircle2,
+  Target, Shield, Layers, CheckCircle2, Sun, Moon,
 } from "lucide-react";
-
-// ─── Data ────────────────────────────────────────────────────────────────
 
 const SCANNERS = [
   { key: "trend-donchian",              name: "Donchian",     family: "Trend",     pass: "6/6", tier: "PERFECT", color: "#3b82f6" },
@@ -30,12 +28,10 @@ const SCANNERS = [
 ] as const;
 
 const TIER_COLORS: Record<string, string> = {
-  PERFECT: "border-emerald-500/40 bg-emerald-500/5 text-emerald-700",
-  GREAT: "border-blue-500/30 bg-blue-500/5 text-blue-700",
-  OK: "border-amber-500/30 bg-amber-500/5 text-amber-700",
+  PERFECT: "border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-400",
+  GREAT: "border-blue-500/30 bg-blue-500/5 text-blue-700 dark:text-blue-400",
+  OK: "border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400",
 };
-
-// ─── Component ────────────────────────────────────────────────────────────
 
 export function IctScannerPage() {
   const [signals, setSignals] = useState<ScanSignal[]>([]);
@@ -46,6 +42,17 @@ export function IctScannerPage() {
   const [isLive, setIsLive] = useState(false);
   const [killzone, setKillzone] = useState("");
   const [enabled, setEnabled] = useState<Set<string>>(new Set(SCANNERS.map(s => s.key)));
+  const [dark, setDark] = useState(false);
+
+  // Theme
+  useEffect(() => {
+    setDark(document.documentElement.classList.contains("dark"));
+  }, []);
+  const toggleTheme = () => {
+    const isDark = document.documentElement.classList.toggle("dark");
+    setDark(isDark);
+    localStorage.setItem("theme", isDark ? "dark" : "light");
+  };
 
   const runScan = useCallback(async (silent = false) => {
     setLoading(true);
@@ -101,7 +108,7 @@ export function IctScannerPage() {
     <div className="min-h-screen" style={{ background: "var(--paper)" }}>
       <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6">
 
-        {/* ─── Header ─── */}
+        {/* Header */}
         <header className="mb-8">
           <div className="flex items-end justify-between">
             <div>
@@ -113,14 +120,13 @@ export function IctScannerPage() {
               </h1>
             </div>
 
-            {/* Status cluster */}
             <div className="flex items-center gap-4">
               {isLive && (
                 <span className="flex items-center gap-1.5">
                   <span className="relative flex h-2 w-2">
                     <span className="absolute inline-flex h-full w-full animate-pulse-dot rounded-full bg-emerald-500" />
                   </span>
-                  <span className="font-mono text-[10px] font-semibold text-emerald-600">LIVE</span>
+                  <span className="font-mono text-[10px] font-semibold text-emerald-500">LIVE</span>
                 </span>
               )}
               {lastScan && (
@@ -138,6 +144,9 @@ export function IctScannerPage() {
                 <Switch checked={autoScan} onCheckedChange={setAutoScan} />
                 <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>AUTO</span>
               </label>
+              <button onClick={toggleTheme} className="p-1.5 rounded-lg transition-colors hover:opacity-80" style={{ color: "var(--ink-2)" }}>
+                {dark ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
               <button
                 onClick={() => runScan(false)}
                 disabled={loading}
@@ -150,16 +159,15 @@ export function IctScannerPage() {
             </div>
           </div>
 
-          {/* Quick stats */}
           <div className="mt-4 flex items-center gap-6">
             <div className="flex items-center gap-1.5">
-              <ArrowUp size={14} className="text-emerald-600" />
-              <span className="font-mono text-sm font-bold text-emerald-600">{longCount}</span>
+              <ArrowUp size={14} className="text-emerald-500" />
+              <span className="font-mono text-sm font-bold text-emerald-500">{longCount}</span>
               <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>LONG</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <ArrowDown size={14} className="text-rose-600" />
-              <span className="font-mono text-sm font-bold text-rose-600">{shortCount}</span>
+              <ArrowDown size={14} className="text-rose-500" />
+              <span className="font-mono text-sm font-bold text-rose-500">{shortCount}</span>
               <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>SHORT</span>
             </div>
             <div className="h-4 w-px" style={{ background: "var(--rule)" }} />
@@ -171,7 +179,7 @@ export function IctScannerPage() {
           </div>
         </header>
 
-        {/* ─── Scanner toggles ─── */}
+        {/* Scanner toggles */}
         <section className="mb-6">
           <p className="font-mono text-[10px] uppercase tracking-[0.12em] mb-3" style={{ color: "var(--ink-2)" }}>
             Active Scanners · {enabled.size}/{SCANNERS.length}
@@ -189,9 +197,9 @@ export function IctScannerPage() {
                   }}
                   className={cn(
                     "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition-all",
-                    on ? cn(TIER_COLORS[s.tier]) : "border-transparent opacity-30 hover:opacity-60"
+                    on ? cn(TIER_COLORS[s.tier]) : "opacity-30 hover:opacity-60"
                   )}
-                  style={!on ? { background: "var(--paper-2)" } : undefined}
+                  style={!on ? { background: "var(--paper-2)", borderColor: "var(--rule)" } : undefined}
                 >
                   <span className="h-1.5 w-1.5 rounded-full" style={{ background: s.color }} />
                   <span className="font-medium">{s.name}</span>
@@ -202,7 +210,7 @@ export function IctScannerPage() {
           </div>
         </section>
 
-        {/* ─── Signal stream ─── */}
+        {/* Signal stream */}
         <section className="mb-12">
           {loading && visibleSignals.length === 0 ? (
             <div className="space-y-1.5">
@@ -229,7 +237,7 @@ export function IctScannerPage() {
           )}
         </section>
 
-        {/* ─── Validated scanners ─── */}
+        {/* Validated scanners */}
         <section className="mb-12">
           <div className="flex items-baseline gap-3 mb-4">
             <Shield size={16} style={{ color: "var(--stem)" }} />
@@ -240,7 +248,6 @@ export function IctScannerPage() {
               14 passed handbook · MT5 candidates
             </span>
           </div>
-
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {SCANNERS.map(s => (
               <div
@@ -261,9 +268,7 @@ export function IctScannerPage() {
                     {s.pass}
                   </span>
                 </div>
-                <div className="font-serif text-sm font-medium" style={{ color: "var(--ink)" }}>
-                  {s.name}
-                </div>
+                <div className="font-serif text-sm font-medium" style={{ color: "var(--ink)" }}>{s.name}</div>
                 <div className="flex items-center justify-between mt-1">
                   <span className="font-mono text-[9px]" style={{ color: "var(--ink-2)" }}>{s.family}</span>
                   <span className="font-mono text-[9px] font-bold" style={{ color: "var(--stem)" }}>{s.tier}</span>
@@ -273,7 +278,7 @@ export function IctScannerPage() {
           </div>
         </section>
 
-        {/* ─── Prop firm result ─── */}
+        {/* Prop firm result */}
         <section className="mb-8">
           <div className="flex items-baseline gap-3 mb-4">
             <Target size={16} style={{ color: "var(--stem)" }} />
@@ -281,15 +286,13 @@ export function IctScannerPage() {
               Prop Firm Combination
             </h2>
           </div>
-
           <div className="rounded-xl border p-5" style={{ borderColor: "var(--rule)", background: "var(--paper-2)" }}>
             <div className="flex items-center justify-between mb-4">
               <p className="font-serif text-sm italic" style={{ color: "var(--ink-2)" }}>
                 Two scanners that individually fail can pass together — they lose on different days.
               </p>
-              <span className="font-mono text-2xl font-bold text-emerald-600">70.4%</span>
+              <span className="font-mono text-2xl font-bold text-emerald-500">70.4%</span>
             </div>
-
             <div className="flex items-center gap-3">
               <div className="flex-1 rounded-lg border p-3" style={{ borderColor: "var(--rule)", background: "var(--paper)" }}>
                 <div className="font-mono text-[9px] uppercase tracking-wider mb-1" style={{ color: "var(--ink-2)" }}>Scanner A</div>
@@ -304,44 +307,27 @@ export function IctScannerPage() {
               </div>
               <span className="font-serif text-lg" style={{ color: "var(--ink-2)" }}>→</span>
               <div className="flex-1 rounded-lg border p-3" style={{ borderColor: "var(--stem)", background: "hsl(161 91% 30% / 0.05)" }}>
-                <div className="font-mono text-[9px] uppercase tracking-wider mb-1 text-emerald-600">Combined</div>
-                <div className="font-serif text-sm font-bold text-emerald-700">70.4% pass</div>
-                <div className="font-mono text-[10px] mt-0.5 text-emerald-600">+7.8% synergy</div>
+                <div className="font-mono text-[9px] uppercase tracking-wider mb-1 text-emerald-500">Combined</div>
+                <div className="font-serif text-sm font-bold text-emerald-500">70.4% pass</div>
+                <div className="font-mono text-[10px] mt-0.5 text-emerald-500">+7.8% synergy</div>
               </div>
             </div>
-
             <div className="mt-4 pt-4 border-t flex items-center gap-6" style={{ borderColor: "var(--rule)" }}>
-              <div className="flex items-center gap-2">
-                <CheckCircle2 size={14} className="text-emerald-600" />
-                <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>$50K account</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Target size={14} style={{ color: "var(--ink-2)" }} />
-                <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>$3K target</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Shield size={14} style={{ color: "var(--ink-2)" }} />
-                <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>$2K trailing DD</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Layers size={14} style={{ color: "var(--ink-2)" }} />
-                <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>50% consistency</span>
-              </div>
+              <div className="flex items-center gap-2"><CheckCircle2 size={14} className="text-emerald-500" /><span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>$50K account</span></div>
+              <div className="flex items-center gap-2"><Target size={14} style={{ color: "var(--ink-2)" }} /><span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>$3K target</span></div>
+              <div className="flex items-center gap-2"><Shield size={14} style={{ color: "var(--ink-2)" }} /><span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>$2K trailing DD</span></div>
+              <div className="flex items-center gap-2"><Layers size={14} style={{ color: "var(--ink-2)" }} /><span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>50% consistency</span></div>
             </div>
           </div>
         </section>
-
       </div>
     </div>
   );
 }
 
-// ─── Signal card ──────────────────────────────────────────────────────────
-
 function SignalCard({ signal }: { signal: ScanSignal }) {
   const isLong = signal.direction === "long";
   const scanner = SCANNERS.find(s => s.key === signal.strategyKey);
-
   return (
     <div
       className="animate-slide-in flex items-center gap-3 rounded-lg border p-3 transition-all hover:shadow-sm"
@@ -350,58 +336,27 @@ function SignalCard({ signal }: { signal: ScanSignal }) {
         background: isLong ? "hsl(161 91% 30% / 0.03)" : "hsl(0 72% 51% / 0.03)",
       }}
     >
-      {/* Direction icon */}
-      <div
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-        style={{ background: isLong ? "hsl(161 91% 30% / 0.1)" : "hsl(0 72% 51% / 0.1)" }}
-      >
-        {isLong
-          ? <ArrowUp size={16} className="text-emerald-600" />
-          : <ArrowDown size={16} className="text-rose-600" />}
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ background: isLong ? "hsl(161 91% 30% / 0.1)" : "hsl(0 72% 51% / 0.1)" }}>
+        {isLong ? <ArrowUp size={16} className="text-emerald-500" /> : <ArrowDown size={16} className="text-rose-500" />}
       </div>
-
-      {/* Symbol + TF */}
       <div className="shrink-0 min-w-[100px]">
         <div className="font-serif text-sm font-medium" style={{ color: "var(--ink)" }}>{signal.display}</div>
         <div className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>{signal.timeframe.toUpperCase()}</div>
       </div>
-
-      {/* Scanner name */}
       <div className="hidden sm:block shrink-0 min-w-[120px]">
-        <div className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>
-          {scanner?.name ?? signal.strategyKey.replace(/^(trend|ict|ea|community|horc|channel)-/, "")}
-        </div>
+        <div className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>{scanner?.name ?? signal.strategyKey.replace(/^(trend|ict|ea|community|horc|channel)-/, "")}</div>
       </div>
-
-      {/* Score bar */}
       <div className="flex items-center gap-2 shrink-0">
         <div className="h-1.5 w-16 rounded-full overflow-hidden" style={{ background: "var(--rule)" }}>
-          <div
-            className="h-full rounded-full transition-all"
-            style={{
-              width: `${signal.score}%`,
-              background: signal.score >= 70 ? "var(--stem)" : signal.score >= 50 ? "var(--copper)" : "var(--loss)",
-            }}
-          />
+          <div className="h-full rounded-full transition-all" style={{ width: `${signal.score}%`, background: signal.score >= 70 ? "var(--stem)" : signal.score >= 50 ? "var(--copper)" : "var(--loss)" }} />
         </div>
         <span className="font-mono text-[10px] w-6" style={{ color: "var(--ink-2)" }}>{signal.score}</span>
       </div>
-
-      {/* Entry/Stop/Target */}
       {signal.entryPrice && (
         <div className="hidden md:flex items-center gap-4 ml-auto shrink-0">
-          <div className="text-right">
-            <div className="font-mono text-[8px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>Entry</div>
-            <div className="font-mono text-xs" style={{ color: "var(--ink)" }}>{signal.entryPrice.toFixed(5)}</div>
-          </div>
-          <div className="text-right">
-            <div className="font-mono text-[8px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>Stop</div>
-            <div className="font-mono text-xs text-rose-600">{signal.stopPrice?.toFixed(5) ?? "—"}</div>
-          </div>
-          <div className="text-right">
-            <div className="font-mono text-[8px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>Target</div>
-            <div className="font-mono text-xs text-emerald-600">{signal.targetPrice?.toFixed(5) ?? "—"}</div>
-          </div>
+          <div className="text-right"><div className="font-mono text-[8px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>Entry</div><div className="font-mono text-xs" style={{ color: "var(--ink)" }}>{signal.entryPrice.toFixed(5)}</div></div>
+          <div className="text-right"><div className="font-mono text-[8px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>Stop</div><div className="font-mono text-xs text-rose-500">{signal.stopPrice?.toFixed(5) ?? "—"}</div></div>
+          <div className="text-right"><div className="font-mono text-[8px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>Target</div><div className="font-mono text-xs text-emerald-500">{signal.targetPrice?.toFixed(5) ?? "—"}</div></div>
         </div>
       )}
     </div>

@@ -4,17 +4,9 @@
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-mono), ui-monospace, monospace;
   --font-serif: var(--font-serif), ui-serif, Georgia, serif;
-
-  --color-paper: hsl(40 33% 98%);
-  --color-paper-2: hsl(40 33% 95%);
-  --color-ink: hsl(20 14% 12%);
-  --color-ink-2: hsl(20 14% 45%);
-  --color-stem: hsl(161 91% 30%);
-  --color-rule: hsl(40 33% 88%);
-  --color-loss: hsl(0 72% 51%);
-  --color-copper: hsl(28 80% 52%);
 }
 
+/* ─── Light mode ─── */
 :root {
   --paper: hsl(40 33% 98%);
   --paper-2: hsl(40 33% 95%);
@@ -24,6 +16,22 @@
   --rule: hsl(40 33% 88%);
   --loss: hsl(0 72% 51%);
   --copper: hsl(28 80% 52%);
+  --card: hsl(40 33% 100%);
+  --card-border: hsl(40 33% 88%);
+}
+
+/* ─── Dark mode ─── */
+.dark {
+  --paper: hsl(220 13% 8%);
+  --paper-2: hsl(220 13% 11%);
+  --ink: hsl(220 13% 92%);
+  --ink-2: hsl(220 13% 60%);
+  --stem: hsl(161 91% 45%);
+  --rule: hsl(220 13% 20%);
+  --loss: hsl(0 72% 55%);
+  --copper: hsl(28 80% 58%);
+  --card: hsl(220 13% 12%);
+  --card-border: hsl(220 13% 22%);
 }
 
 * { border-color: var(--rule); }
@@ -34,11 +42,10 @@ body {
   font-family: var(--font-inter), system-ui, sans-serif;
 }
 
-/* ── Typography ── */
 .font-serif { font-family: var(--font-serif), Georgia, serif; }
 .font-mono { font-family: var(--font-mono), ui-monospace, monospace; }
 
-/* ── Animations ── */
+/* ─── Animations ─── */
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.6; transform: scale(1.2); }
@@ -61,7 +68,6 @@ body {
   animation: shimmer 1.5s infinite;
 }
 
-/* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 3px; }
