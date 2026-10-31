@@ -16,9 +16,34 @@ Open http://localhost:4000
 ## Deploy on Vercel
 
 1. Go to https://vercel.com → New Project → Import `NoirDOT/Quant-Scanner`
-2. Create a free Postgres database: Vercel → Storage → Create → Postgres
-3. Set environment variable: `DATABASE_URL` = your Postgres connection string
-4. Deploy → you get a public URL
+2. Create a Postgres database (Vercel → Storage → Create → Postgres)
+3. Set `DATABASE_URL` env var to the Postgres connection string
+4. Deploy
+
+## Discord alerts
+
+Get signal alerts in Discord — one channel, no bot needed:
+
+1. In your Discord server, create a channel (e.g., `#scanner-signals`)
+2. Channel Settings → Integrations → Webhooks → Create Webhook → copy URL
+3. Set env var:
+   ```
+   DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+   ```
+4. Restart the scanner
+
+When a signal scores ≥70 (grade A or A+), you get a Discord message like:
+
+```
+🔴 SHORT EUR/USD · 4h
+SMC BOS s3 · Score 78 · Grade A
+Entry: 1.0823
+Stop: 1.0850
+Target: 1.0770
+Close broke below Donchian lower, lower tracker falling
+```
+
+That's it. You see it, you check the chart, you decide.
 
 ## Features
 
@@ -30,6 +55,4 @@ Open http://localhost:4000
 - Backtest engine (walk-forward, cost-adjusted)
 - Prop Firm Sim with Monte Carlo combination optimizer
 - 14 handbook-validated scanners (MT5 candidates)
-
-## Latest update
-Fixed Tailwind v4 PostCSS config + turbopackIgnore for CSV file access.
+- Discord webhook alerts (grade A+ / A only)
