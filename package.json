@@ -56,7 +56,8 @@
     "yahoo-finance2": "^4.0.5",
     "zod": "^4.0.2",
     "zustand": "^5.0.6",
-    "@tailwindcss/postcss": "^4"
+    "@tailwindcss/postcss": "^4",
+    "recharts": "^2.15.4"
   },
   "devDependencies": {
     "@types/react": "^19",
