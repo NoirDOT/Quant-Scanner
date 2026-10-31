@@ -100,7 +100,7 @@ export async function readCsvCandles(
 
   // Try each suffix variant
   for (const suffix of TF_TO_SUFFIXES[tf]) {
-    const filePath = path.join(CSV_DIR, `${csvSymbol}${suffix}`);
+    const filePath = path.join(/*turbopackIgnore: true*/ CSV_DIR, `${csvSymbol}${suffix}`);
     try {
       const stat = await fs.stat(/*turbopackIgnore: true*/ filePath);
       if (!stat.isFile() || stat.size === 0) continue;
@@ -183,7 +183,7 @@ export async function listCsvFiles(): Promise<{ symbol: string; tf: string; bars
       const tfLower = tfRaw.toLowerCase();
       const tfMap: Record<string, Timeframe> = { h1: "1h", h2: "2h", h4: "4h", d1: "1d", w1: "1w" };
       const tf = tfMap[tfLower] || tfLower;
-      const filePath = path.join(CSV_DIR, file);
+      const filePath = path.join(/*turbopackIgnore: true*/ CSV_DIR, file);
       const stat = await fs.stat(/*turbopackIgnore: true*/ filePath);
       const candles = await readCsvCandles(symbol, tf as Timeframe);
       if (candles.length === 0) continue;
