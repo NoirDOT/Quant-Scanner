@@ -5,10 +5,10 @@ export interface HAState {
   high: number;
   low: number;
   close: number;
-  trendUp: boolean;     // bull candle, no lower wick
-  trendDown: boolean;   // bear candle, no upper wick
-  strongBull: boolean;  // body, no lower wick, close == high
-  strongBear: boolean;  // body, no upper wick, close == low
+  trendUp: boolean;
+  trendDown: boolean;
+  strongBull: boolean;
+  strongBear: boolean;
 }
 
 export function heikinAshi(
@@ -20,13 +20,19 @@ export function heikinAshi(
   const out: HAState[] = [];
   let prevOpen: number | null = null;
   for (let i = 0; i < closes.length; i++) {
-    const haClose = (opens[i] + highs[i] + lows[i] + closes[i]) / 4;
-    const haOpen: number = prevOpen === null ? (opens[i] + closes[i]) / 2 : (prevOpen + (out[i - 1]?.close ?? closes[i])) / 2;
-    const haHigh = Math.max(highs[i], haOpen, haClose);
-    const haLow = Math.min(lows[i], haOpen, haClose);
-    const isBull = haClose >= haOpen;
-    const lowerWick = haLow < Math.min(haOpen, haClose);
-    const upperWick = haHigh > Math.max(haOpen, haClose);
+    const haClose: number = (opens[i] + highs[i] + lows[i] + closes[i]) / 4;
+    let haOpen: number;
+    if (prevOpen === null) {
+      haOpen = (opens[i] + closes[i]) / 2;
+    } else {
+      const prevClose: number = out.length > 0 ? out[out.length - 1].close : closes[i];
+      haOpen = (prevOpen + prevClose) / 2;
+    }
+    const haHigh: number = Math.max(highs[i], haOpen, haClose);
+    const haLow: number = Math.min(lows[i], haOpen, haClose);
+    const isBull: boolean = haClose >= haOpen;
+    const lowerWick: boolean = haLow < Math.min(haOpen, haClose);
+    const upperWick: boolean = haHigh > Math.max(haOpen, haClose);
     out.push({
       open: haOpen,
       high: haHigh,
@@ -42,7 +48,6 @@ export function heikinAshi(
   return out;
 }
 
-// Detect trend continuation: 3 consecutive HA candles with no opposite wick
 export function haTrendContinuation(ha: HAState[], lookback = 3): "bull" | "bear" | "none" {
   if (ha.length < lookback) return "none";
   const recent = ha.slice(-lookback);
