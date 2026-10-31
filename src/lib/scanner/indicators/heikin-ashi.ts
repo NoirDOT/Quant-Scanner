@@ -21,7 +21,7 @@ export function heikinAshi(
   let prevOpen: number | null = null;
   for (let i = 0; i < closes.length; i++) {
     const haClose = (opens[i] + highs[i] + lows[i] + closes[i]) / 4;
-    const haOpen = prevOpen === null ? (opens[i] + closes[i]) / 2 : (prevOpen + (out[i - 1]?.close ?? closes[i])) / 2;
+    const haOpen: number = prevOpen === null ? (opens[i] + closes[i]) / 2 : (prevOpen + (out[i - 1]?.close ?? closes[i])) / 2;
     const haHigh = Math.max(highs[i], haOpen, haClose);
     const haLow = Math.min(lows[i], haOpen, haClose);
     const isBull = haClose >= haOpen;
