@@ -30,3 +30,6 @@ Open http://localhost:4000
 - Backtest engine (walk-forward, cost-adjusted)
 - Prop Firm Sim with Monte Carlo combination optimizer
 - 14 handbook-validated scanners (MT5 candidates)
+
+## Latest update
+Fixed Tailwind v4 PostCSS config + turbopackIgnore for CSV file access.
