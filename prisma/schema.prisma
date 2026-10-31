@@ -2,12 +2,12 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// For local development: uses SQLite (no setup needed)
+// For Vercel deployment: change provider to "postgresql" and set DATABASE_URL to your Postgres URL
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
-
-// ─── Scanner models ──────────────────────────────────────────────────────
 
 model ScanResult {
   id            String   @id @default(cuid())
