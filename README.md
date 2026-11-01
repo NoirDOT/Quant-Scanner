@@ -19,23 +19,51 @@ Open http://localhost:4000
 2. Create Postgres database (Vercel → Storage)
 3. In `prisma/schema.prisma`, change `provider = "sqlite"` to `provider = "postgresql"`
 4. Set env vars: `DATABASE_URL`, `DISCORD_WEBHOOK_URL`
-5. Deploy — Vercel Cron auto-runs every 6h
+5. Deploy
 
-## Discord alerts
+## Discord alerts — how it works
 
-- **Signal alerts** — when a signal scores ≥70 (grade A+ / A), Discord gets a message automatically
-- **6h status ping** — Vercel Cron calls `/api/scanner/ping` every 6 hours. If the scanner is alive, you get:
+### Real-time (browser open)
+When you have the scanner page open, it auto-scans every 15 minutes. Any signal scoring ≥50 sends a Discord alert immediately.
 
+### Scheduled scans (browser closed)
+Vercel Cron runs `/api/scanner/ping` daily at 9am UTC. This runs a full scan across 12 instruments and sends:
+- Individual signal alerts (if any found)
+- A summary message: "📡 3 Signals Found — Scanner is LIVE"
+
+### Every 6 hours (recommended — free)
+Vercel Hobby only allows 1 cron per day. To get scans every 6 hours, use [cron-job.org](https://cron-job.org) (free):
+
+1. Create a free account at cron-job.org
+2. Create a job:
+   - URL: `https://quant-scanner-g7r7.vercel.app/api/scanner/ping`
+   - Method: GET
+   - Schedule: every 6 hours
+3. Done — you get 4 scans per day that each fire Discord alerts
+
+### What you see in Discord
+
+**Signal alert:**
 ```
-📡 Scanner Status
-Scanner is LIVE · 3 signals found
+🔴 SHORT EUR/USD · 4h
+SMC BOS s3 · Score 78 · Grade A
+Entry: 1.0823 · Stop: 1.0850 · Target: 1.0770
+Close broke below Donchian lower, lower tracker falling
 ```
 
-If it's down, you get:
+**Summary (after each scheduled scan):**
+```
+📡 3 Signals Found
+Scanner is LIVE
+3 signals detected across 12 pairs
+Signal alerts sent above ↑
+Next scan: in 6 hours
+```
 
+**If scanner is down:**
 ```
 ⚠️ Scanner Down
-Scanner health check failed
+Scheduled scan failed
 ```
 
 ## Scanned instruments
@@ -48,4 +76,5 @@ EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, USD/CHF, NZD/USD, Bitcoin, Ethereum
 - Live Yahoo Finance price overlay
 - Auto-scan (5m/15m/60m cadence)
 - Dark mode
-- Discord webhook alerts + 6h status ping
+- Discord webhook alerts (score ≥50)
+- Scheduled scans via Vercel Cron + cron-job.org
