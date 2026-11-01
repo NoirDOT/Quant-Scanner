@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import type { ScanSignal } from "@/lib/scanner/types";
 import {
   Activity, Clock, ArrowUp, ArrowDown, Zap, Radio,
-  Target, Shield, Layers, CheckCircle2, Sun, Moon,
+  Target, Shield, Layers, CheckCircle2, Sun, Moon, AlertCircle,
 } from "lucide-react";
 
 const SCANNERS = [
@@ -33,17 +33,26 @@ const TIER_COLORS: Record<string, string> = {
   OK: "border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400",
 };
 
-// Timeframe-aware cadence:
-//   1h bars close every hour → check every 5 min (catch intrabar moves)
-//   4h bars close every 4 hours → check every 15 min
-//   1d bars close once a day → check every 60 min
-// We scan all TFs each poll, but the data cache ensures we don't refetch
-// until the cache TTL expires (5min for 4h, 30min for 1d, 60min for 1w).
-// So even though we poll every 5 min, 1d signals only update every 30 min.
 const SCAN_INTERVALS = {
-  fast: 5 * 60 * 1000,    // 5 min — catches 1h bar moves
-  medium: 15 * 60 * 1000,  // 15 min — balanced for 4h
-  slow: 60 * 60 * 1000,    // 60 min — daily only
+  fast: 5 * 60 * 1000,
+  medium: 15 * 60 * 1000,
+  slow: 60 * 60 * 1000,
+};
+
+// Curated instrument list — not all 50+. Keeps the scan fast (under 10s on Vercel).
+// Covers forex majors + crypto + gold + indices.
+const INSTRUMENTS = [
+  "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", "USDCHF=X", "NZDUSD=X",
+  "BTC-USD", "ETH-USD",
+  "GC=F",
+  "^GSPC", "^NDX",
+] as const;
+
+const ASSET_LABELS: Record<string, string> = {
+  "EURUSD=X": "EUR/USD", "GBPUSD=X": "GBP/USD", "USDJPY=X": "USD/JPY",
+  "AUDUSD=X": "AUD/USD", "USDCAD=X": "USD/CAD", "USDCHF=X": "USD/CHF", "NZDUSD=X": "NZD/USD",
+  "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum", "GC=F": "Gold",
+  "^GSPC": "S&P 500", "^NDX": "Nasdaq 100",
 };
 
 export function IctScannerPage() {
@@ -57,6 +66,7 @@ export function IctScannerPage() {
   const [killzone, setKillzone] = useState("");
   const [enabled, setEnabled] = useState<Set<string>>(new Set(SCANNERS.map(s => s.key)));
   const [dark, setDark] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => { setDark(document.documentElement.classList.contains("dark")); }, []);
   const toggleTheme = () => {
@@ -67,19 +77,33 @@ export function IctScannerPage() {
 
   const runScan = useCallback(async (silent = false) => {
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch("/api/scanner", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // Scan all timeframes — the data cache handles freshness per TF
-        body: JSON.stringify({ strategyType: "all", timeframes: ["1h", "4h", "1d"], minScore: 50, dispatch: true }),
+        body: JSON.stringify({
+          strategyType: "all",
+          instruments: Array.from(INSTRUMENTS),
+          timeframes: ["4h", "1d"],
+          minScore: 50,
+          dispatch: true,
+        }),
       });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `HTTP ${res.status}`);
+      }
       const json = await res.json();
       setSignals(json.signals ?? []);
       setLastScan(new Date());
       setIsLive(!!json.meta?.live);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+    } catch (e) {
+      console.error("[scanner] scan failed:", e);
+      setError(e instanceof Error ? e.message : "Scan failed");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { void runScan(true); }, [runScan]);
@@ -123,7 +147,6 @@ export function IctScannerPage() {
     <div className="min-h-screen" style={{ background: "var(--paper)" }}>
       <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6">
 
-        {/* Header */}
         <header className="mb-8">
           <div className="flex items-end justify-between">
             <div>
@@ -143,18 +166,13 @@ export function IctScannerPage() {
                 </span>
               )}
               {killzone && (
-                <span className="flex items-center gap-1 font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>
-                  <Clock size={11} />{killzone}
-                </span>
+                <span className="flex items-center gap-1 font-mono text-[10px]" style={{ color: "var(--ink-2)" }}><Clock size={11} />{killzone}</span>
               )}
-              {/* Cadence selector */}
               <div className="flex items-center gap-1 rounded-lg border" style={{ borderColor: "var(--rule)" }}>
                 {(["fast", "medium", "slow"] as const).map(v => (
                   <button key={v} onClick={() => setScanInterval(v)}
-                    className={cn("px-2 py-1 text-[10px] font-mono rounded transition-colors",
-                      scanInterval === v ? "text-white" : "hover:opacity-70")}
-                    style={{ background: scanInterval === v ? "var(--stem)" : "transparent", color: scanInterval === v ? "white" : "var(--ink-2)" }}
-                  >
+                    className={cn("px-2 py-1 text-[10px] font-mono rounded transition-colors", scanInterval === v ? "text-white" : "hover:opacity-70")}
+                    style={{ background: scanInterval === v ? "var(--stem)" : "transparent", color: scanInterval === v ? "white" : "var(--ink-2)" }}>
                     {v === "fast" ? "5m" : v === "medium" ? "15m" : "60m"}
                   </button>
                 ))}
@@ -182,12 +200,18 @@ export function IctScannerPage() {
             <div className="flex items-center gap-1.5"><Radio size={14} style={{ color: "var(--ink-2)" }} /><span className="font-mono text-sm font-bold" style={{ color: "var(--ink)" }}>{visibleSignals.length}</span><span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>SIGNALS</span></div>
             <div className="h-4 w-px" style={{ background: "var(--rule)" }} />
             <div className="flex items-center gap-1.5 font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>
-              <Clock size={11} /> polls every {intervalLabel} · 1h/4h/1d
+              <Clock size={11} /> {intervalLabel} · {INSTRUMENTS.length} pairs · 4h/1d
             </div>
           </div>
+
+          {error && (
+            <div className="mt-4 flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/5 p-3">
+              <AlertCircle size={14} className="text-rose-500 shrink-0" />
+              <span className="text-xs text-rose-600">{error}</span>
+            </div>
+          )}
         </header>
 
-        {/* Scanner toggles */}
         <section className="mb-6">
           <p className="font-mono text-[10px] uppercase tracking-[0.12em] mb-3" style={{ color: "var(--ink-2)" }}>
             Active Scanners · {enabled.size}/{SCANNERS.length}
@@ -208,7 +232,6 @@ export function IctScannerPage() {
           </div>
         </section>
 
-        {/* Signal stream */}
         <section className="mb-12">
           {loading && visibleSignals.length === 0 ? (
             <div className="space-y-1.5">{Array.from({ length: 4 }).map((_, i) => (<div key={i} className="h-14 rounded-lg shimmer" />))}</div>
@@ -216,14 +239,13 @@ export function IctScannerPage() {
             <div className="rounded-xl border p-16 text-center" style={{ borderColor: "var(--rule)" }}>
               <Radio className="h-10 w-10 mx-auto mb-4 opacity-20" style={{ color: "var(--ink-2)" }} />
               <p className="font-serif text-lg italic" style={{ color: "var(--ink-2)" }}>No signals right now.</p>
-              <p className="font-mono text-[10px] mt-2" style={{ color: "var(--ink-2)" }}>The scanner is watching. Signals appear here when setups form.</p>
+              <p className="font-mono text-[10px] mt-2" style={{ color: "var(--ink-2)" }}>Scanning {INSTRUMENTS.length} pairs · {Object.values(ASSET_LABELS).join(", ")}</p>
             </div>
           ) : (
             <div className="space-y-1.5">{visibleSignals.sort((a, b) => b.score - a.score).map((sig, i) => <SignalCard key={i} signal={sig} />)}</div>
           )}
         </section>
 
-        {/* Validated scanners */}
         <section className="mb-12">
           <div className="flex items-baseline gap-3 mb-4">
             <Shield size={16} style={{ color: "var(--stem)" }} />
@@ -248,7 +270,6 @@ export function IctScannerPage() {
           </div>
         </section>
 
-        {/* Prop firm result */}
         <section className="mb-8">
           <div className="flex items-baseline gap-3 mb-4">
             <Target size={16} style={{ color: "var(--stem)" }} />
