@@ -1,18 +1,39 @@
 // GET /api/scanner/ping — runs a FULL scan + sends signals to Discord
-// Called by Vercel Cron (daily on Hobby plan) or cron-job.org (every 6h)
-// This runs even when your browser is closed — you get Discord alerts 24/7
+// Triggered by GitHub Actions (every 6h) or manually from the Actions tab.
+// This runs even when your browser is closed — you get Discord alerts 24/7.
+//
+// Security: if CRON_SECRET env var is set, callers must send it as a
+// Bearer token in the Authorization header. This prevents random people
+// from triggering scans. If CRON_SECRET is not set, the endpoint is open
+// (useful for testing, but set it in production).
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // ── Auth check ──────────────────────────────────────────────
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = req.headers.get("authorization") ?? "";
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    if (token !== cronSecret) {
+      return NextResponse.json(
+        { ok: false, error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+  }
+
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+  const baseUrl = process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : "https://quant-scanner-g7r7.vercel.app";
 
   try {
     // Run a full scan — same instruments + timeframes as the browser
-    const scanRes = await fetch("https://quant-scanner-g7r7.vercel.app/api/scanner", {
+    const scanRes = await fetch(`${baseUrl}/api/scanner`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
