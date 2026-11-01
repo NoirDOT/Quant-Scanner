@@ -1,4 +1,10 @@
 {
   "buildCommand": "npx prisma generate && next build",
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "crons": [
+    {
+      "path": "/api/scanner/ping",
+      "schedule": "0 */6 * * *"
+    }
+  ]
 }

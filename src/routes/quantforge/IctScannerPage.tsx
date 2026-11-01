@@ -86,7 +86,7 @@ export function IctScannerPage() {
           strategyType: "all",
           instruments: Array.from(INSTRUMENTS),
           timeframes: ["4h", "1d"],
-          minScore: 50,
+          minScore: 30,
           dispatch: true,
         }),
       });
