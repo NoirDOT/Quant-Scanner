@@ -148,12 +148,12 @@ export function IctScannerPage() {
       <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6">
 
         <header className="mb-8">
-          <div className="flex items-end justify-between">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="font-mono text-[10px] uppercase tracking-[0.15em] mb-2" style={{ color: "var(--ink-2)" }}>Quant Scanner</p>
               <h1 className="font-serif text-4xl font-semibold tracking-tight" style={{ color: "var(--ink)" }}>Signal Stream</h1>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-3">
               {isLive && (
                 <span className="flex items-center gap-1.5">
                   <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-pulse-dot rounded-full bg-emerald-500" /></span>

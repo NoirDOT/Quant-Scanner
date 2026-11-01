@@ -5,7 +5,7 @@
 import type { ScanSignal } from "../types";
 
 const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL ?? "";
-const MIN_SCORE = 70; // only send grade A+ / A signals
+const MIN_SCORE = 50; // only send grade A+ / A signals
 
 export async function sendDiscordAlert(signal: ScanSignal): Promise<boolean> {
   if (!WEBHOOK_URL) return false;

@@ -14,7 +14,7 @@ export async function GET() {
 
   try {
     // Quick scan to check if the scanner is alive
-    const scanRes = await fetch("https://" + process.env.VERCEL_URL + "/api/scanner", {
+    const scanRes = await fetch("/api/scanner", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
