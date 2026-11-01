@@ -1,0 +1,49 @@
+# Quant Scanner — Scheduled Discord Signals
+# ----------------------------------------------------------
+# Runs the scanner every 6 hours and dispatches Discord
+# alerts for any signal scoring >= 50.
+#
+# This REPLACES Vercel Cron (Hobby plan = 1/day max).
+# GitHub Actions free tier = 2,000 min/month.
+# One scan takes ~30s = ~360 min/month for 6h scans.
+#
+# You can also trigger a scan manually:
+#   GitHub repo → Actions tab → "Scanner Sweep" → Run workflow
+# ----------------------------------------------------------
+
+name: Scanner Sweep
+
+on:
+  schedule:
+    # Every 6 hours at :00 (UTC)
+    # 00:00, 06:00, 12:00, 18:00 UTC
+    - cron: "0 */6 * * *"
+
+  # Manual trigger from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Trigger scanner sweep
+        run: |
+          echo "=== Triggering scanner at $(date -u) ==="
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ vars.SCANNER_URL || 'https://quant-scanner-g7r7.vercel.app' }}/api/scanner/ping")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Scanner returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+          echo "=== Scan complete ==="
