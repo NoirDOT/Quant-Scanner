@@ -2,15 +2,111 @@
 // Triggered by GitHub Actions (every 6h) or manually from the Actions tab.
 // This runs even when your browser is closed — you get Discord alerts 24/7.
 //
+// Query params:
+//   ?test=1   Send sample signals + summary to Discord (preview the embed design)
+//
 // Security: if CRON_SECRET env var is set, callers must send it as a
-// Bearer token in the Authorization header. This prevents random people
-// from triggering scans. If CRON_SECRET is not set, the endpoint is open
-// (useful for testing, but set it in production).
+// Bearer token in the Authorization header.
 
 import { NextRequest, NextResponse } from "next/server";
+import type { ScanSignal } from "@/lib/scanner/types";
+import { sendDiscordAlerts, sendDiscordSummary, buildSignalEmbed } from "@/lib/scanner/alerts/discord";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+// ── Sample signals for test mode ────────────────────────────
+const SAMPLE_SIGNALS: ScanSignal[] = [
+  {
+    strategyKey: "trend-donchian-4h",
+    strategyType: "trend",
+    strategyLabel: "Donchian Breakout",
+    symbol: "EURUSD=X",
+    display: "EUR/USD",
+    assetClass: "forex",
+    timeframe: "4h",
+    direction: "long",
+    score: 78,
+    grade: "A",
+    gradeFactors: { rawScore: 78, confluenceScore: 20, killzoneScore: 22, rrScore: 18, catalogScore: 12, freshnessScore: 6 },
+    reasons: [
+      "Close broke above Donchian 20 upper band",
+      "Higher highs forming on 4H structure",
+      "London killzone active",
+      "EMA stack aligned bullish",
+    ],
+    entryPrice: 1.08234,
+    stopPrice: 1.07981,
+    targetPrice: 1.08745,
+    generatedAt: new Date().toISOString(),
+  },
+  {
+    strategyKey: "ict-fvg-1d",
+    strategyType: "ict",
+    strategyLabel: "Fair Value Gap",
+    symbol: "GBPUSD=X",
+    display: "GBP/USD",
+    assetClass: "forex",
+    timeframe: "1d",
+    direction: "short",
+    score: 72,
+    grade: "A",
+    gradeFactors: { rawScore: 72, confluenceScore: 18, killzoneScore: 20, rrScore: 16, catalogScore: 10, freshnessScore: 8 },
+    reasons: [
+      "Bearish FVG unfilled on daily",
+      "Liquidity sweep above prior high",
+      "Market structure shift to bearish",
+    ],
+    entryPrice: 1.27154,
+    stopPrice: 1.27520,
+    targetPrice: 1.26410,
+    generatedAt: new Date().toISOString(),
+  },
+  {
+    strategyKey: "community-smc-bos-s3-4h",
+    strategyType: "trader",
+    strategyLabel: "SMC BOS s3",
+    symbol: "USDJPY=X",
+    display: "USD/JPY",
+    assetClass: "forex",
+    timeframe: "4h",
+    direction: "long",
+    score: 68,
+    grade: "B+",
+    gradeFactors: { rawScore: 68, confluenceScore: 16, killzoneScore: 18, rrScore: 14, catalogScore: 12, freshnessScore: 8 },
+    reasons: [
+      "Break of structure to upside",
+      "Order block mitigation below",
+      "Equal lows swept",
+    ],
+    entryPrice: 151.234,
+    stopPrice: 150.890,
+    targetPrice: 152.120,
+    generatedAt: new Date().toISOString(),
+  },
+  {
+    strategyKey: "ea-ema-cloud-1d",
+    strategyType: "ea",
+    strategyLabel: "EMA Cloud",
+    symbol: "BTC-USD",
+    display: "Bitcoin",
+    assetClass: "crypto",
+    timeframe: "1d",
+    direction: "long",
+    score: 65,
+    grade: "B+",
+    gradeFactors: { rawScore: 65, confluenceScore: 15, killzoneScore: 8, rrScore: 16, catalogScore: 14, freshnessScore: 12 },
+    reasons: [
+      "Price reclaimed 21/55 EMA cloud",
+      "Daily MACD histogram flipped positive",
+      "Volume rising 3 sessions",
+    ],
+    entryPrice: 67250,
+    stopPrice: 64800,
+    targetPrice: 72400,
+    generatedAt: new Date().toISOString(),
+  },
+];
 
 export async function GET(req: NextRequest) {
   // ── Auth check ──────────────────────────────────────────────
@@ -27,12 +123,61 @@ export async function GET(req: NextRequest) {
   }
 
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+  const url = new URL(req.url);
+  const isTest = url.searchParams.get("test") === "1";
+
+  // ── Test mode: send sample signals + summary to Discord ────
+  if (isTest) {
+    if (!webhookUrl) {
+      return NextResponse.json(
+        { ok: false, error: "DISCORD_WEBHOOK_URL not set" },
+        { status: 500 }
+      );
+    }
+
+    // Send a single signal first
+    const singleEmbed = buildSignalEmbed(SAMPLE_SIGNALS[0]);
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: "**▼ TEST — single signal preview ▼**",
+        embeds: [singleEmbed],
+      }),
+    }).catch(() => {});
+
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Send the remaining 3 signals from different families
+    for (const sig of SAMPLE_SIGNALS.slice(1)) {
+      const embed = buildSignalEmbed(sig);
+      await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ embeds: [embed] }),
+      }).catch(() => {});
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Send the summary embed
+    await sendDiscordSummary(SAMPLE_SIGNALS, true);
+
+    return NextResponse.json({
+      ok: true,
+      test: true,
+      sent: SAMPLE_SIGNALS.length + 1, // 4 signals + 1 summary
+      message: "Test embeds sent to Discord — check your channel",
+    });
+  }
+
+  // ── Normal mode: run a full scan ───────────────────────────
   const baseUrl = process.env.VERCEL_URL
     ? `https://${process.env.VERCEL_URL}`
     : "https://quant-scanner-g7r7.vercel.app";
 
   try {
-    // Run a full scan — same instruments + timeframes as the browser
     const scanRes = await fetch(`${baseUrl}/api/scanner`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -50,27 +195,11 @@ export async function GET(req: NextRequest) {
     const scanData = await scanRes.json();
     const signalCount = scanData.count ?? 0;
     const isLive = scanData.meta?.live ?? false;
+    const signals: ScanSignal[] = scanData.signals ?? [];
 
     // Send a status summary to Discord
     if (webhookUrl) {
-      const embed = {
-        title: signalCount > 0 ? `📡 ${signalCount} Signal${signalCount === 1 ? "" : "s"} Found` : "📡 Scanner Status",
-        description: [
-          `Scanner is **${isLive ? "LIVE" : "STALE"}**`,
-          `${signalCount} signal${signalCount === 1 ? "" : "s"} detected across 12 pairs`,
-          signalCount > 0 ? "Signal alerts sent above ↑" : "No setups right now — market is quiet.",
-          `\nNext scan: in 6 hours`,
-        ].join("\n"),
-        color: signalCount > 0 ? 0x22c55e : 0xf59e0b,
-        timestamp: new Date().toISOString(),
-        footer: { text: "Quant Scanner · scheduled scan" },
-      };
-
-      await fetch(webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ embeds: [embed] }),
-      }).catch(() => {});
+      await sendDiscordSummary(signals, isLive);
     }
 
     return NextResponse.json({ ok: true, alive: true, live: isLive, signals: signalCount });
@@ -78,11 +207,14 @@ export async function GET(req: NextRequest) {
     // Scanner down — send alert
     if (webhookUrl) {
       const embed = {
-        title: "⚠️ Scanner Down",
-        description: `Scheduled scan failed at ${new Date().toISOString()}\nError: ${e instanceof Error ? e.message : "unknown"}`,
+        title: "⚠️  Scanner Down",
+        description: [
+          `Scheduled scan failed at ${new Date().toISOString()}`,
+          `\`\`\`${e instanceof Error ? e.message : "unknown error"}\`\`\``,
+        ].join("\n"),
         color: 0xef4444,
         timestamp: new Date().toISOString(),
-        footer: { text: "Quant Scanner · scheduled scan" },
+        footer: { text: "Quant Scanner · scheduled sweep" },
       };
 
       await fetch(webhookUrl, {
