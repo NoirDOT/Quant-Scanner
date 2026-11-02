@@ -10,12 +10,30 @@ export { initTelegram } from "./telegram";
 export { initEmail } from "./email";
 
 export async function dispatchAlerts(signals: ScanSignal[]): Promise<void> {
-  // 1. Discord — fires for every signal with score >= 70 (grade A+ / A)
-  // Just needs DISCORD_WEBHOOK_URL env var. No DB config needed.
+  // 1. Discord — needs DISCORD_WEBHOOK_URL env var. No DB config needed.
+  //    A full sweep can produce 600+ raw signals (10 trader models all firing
+  //    on the same pair). Flooding Discord with hundreds of embeds also blows
+  //    the 30 msg/min webhook rate limit. So:
+  //      a) score >= 50 only
+  //      b) dedupe: keep the BEST signal per symbol+timeframe+direction
+  //         (the 10 trader models collapse into one embed per pair)
+  //      c) cap at the top 12 per sweep, sorted by score
   if (process.env.DISCORD_WEBHOOK_URL) {
+    const best = new Map<string, ScanSignal>();
     for (const sig of signals) {
+      if (sig.score < 50) continue;
+      const key = `${sig.symbol}:${sig.timeframe}:${sig.direction}`;
+      const prev = best.get(key);
+      if (!prev || sig.score > prev.score) best.set(key, sig);
+    }
+    const toSend = Array.from(best.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 12);
+
+    for (const sig of toSend) {
       try {
         await sendDiscordAlert(sig);
+        await new Promise((r) => setTimeout(r, 1200)); // stay under 30 msg/min
       } catch (err) {
         console.error("[alerts] discord error:", err);
       }
