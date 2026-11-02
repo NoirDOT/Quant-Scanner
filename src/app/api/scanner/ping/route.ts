@@ -200,9 +200,25 @@ export async function GET(req: NextRequest) {
         dispatch: true,  // ← sends signals to Discord automatically
       }),
     });
-    const scanData = await scanRes.json();
+    const scanText = await scanRes.text();
+    let scanData: any = {};
+    try {
+      scanData = JSON.parse(scanText);
+    } catch {
+      scanData = { parseError: true, bodyStart: scanText.slice(0, 200) };
+    }
     const signalCount = scanData.count ?? 0;
     const isLive = scanData.meta?.live ?? false;
+
+    if (scanData.parseError || !scanRes.ok) {
+      console.error(`[ping] scan fetch bad response: status=${scanRes.status} body=${scanText.slice(0, 300)}`);
+      return NextResponse.json({
+        ok: false,
+        alive: true,
+        scanStatus: scanRes.status,
+        scanBodyStart: scanText.slice(0, 300),
+      }, { status: 502 });
+    }
     const signals: ScanSignal[] = scanData.signals ?? [];
 
     // Send a status summary to Discord
