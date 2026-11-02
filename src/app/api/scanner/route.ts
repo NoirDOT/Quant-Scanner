@@ -10,6 +10,9 @@ import {
   type AssetClass,
   type Instrument,
 } from "@/lib/scanner/instruments";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 120; // parallel scan of 24-46 pairs needs headroom
 import { getCandlesLive } from "@/lib/scanner/data";
 import { anyFilterMatches } from "@/lib/scanner/filters";
 import { TREND_SCANNERS, TREND_STRATEGIES, runTrendScan } from "@/lib/scanner/strategies/trend";
@@ -160,13 +163,23 @@ export async function POST(req: NextRequest) {
       const m2022 = await model2022Scanner(inst.symbol, inst.display, inst.assetClass, "1d", "4h", "1h");
       if (m2022) localSignals.push(m2022);
     }
-    // Trader scanners
+    // Trader scanners — run all 10 models in parallel (each fetches 1h/5m data,
+    // cached per symbol after first call, so parallel is safe + much faster)
     if (strategyType === "trader" || strategyType === "all") {
       const traders = traderKeys && traderKeys.length > 0
         ? traderKeys
         : TRADER_STRATEGIES.map((t) => t.key);
-      for (const tk of traders) {
-        const result = await runTraderScan(tk, inst.symbol, inst.display, inst.assetClass);
+      const traderResults = await Promise.all(
+        traders.map(async (tk) => {
+          try {
+            return await runTraderScan(tk, inst.symbol, inst.display, inst.assetClass);
+          } catch (err) {
+            console.error(`[scanner] trader ${tk} failed for ${inst.symbol}:`, err);
+            return null;
+          }
+        })
+      );
+      for (const result of traderResults) {
         if (result) localSignals.push(traderResultToSignal(result));
       }
     }
@@ -174,8 +187,8 @@ export async function POST(req: NextRequest) {
   };
 
   // ── Concurrency pool: fetch + scan N instruments at a time ──
-  // Turns a serial 46×2 fetch chain (~60s+) into ~8 parallel lanes (~10s)
-  const CONCURRENCY = 8;
+  // Turns a serial 46×2 fetch chain (~60s+) into ~10 parallel lanes (~15s)
+  const CONCURRENCY = 10;
   const queue = [...instruments];
   const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
     while (queue.length > 0) {

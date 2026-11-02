@@ -13,7 +13,7 @@ import type { ScanSignal } from "@/lib/scanner/types";
 import { sendDiscordAlerts, sendDiscordSummary, buildSignalEmbed } from "@/lib/scanner/alerts/discord";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 150; // cron calls the scan (120s) + sends summary
 
 // ── Sample signals for test mode ────────────────────────────
 const SAMPLE_SIGNALS: ScanSignal[] = [
