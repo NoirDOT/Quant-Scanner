@@ -82,11 +82,13 @@ export async function POST(req: NextRequest) {
   const livePrices: Record<string, number | null> = {};
   let anyLive = false;
 
-  for (const inst of instruments) {
+  // ── Per-instrument scan (extracted so we can run in parallel) ──
+  const scanInstrument = async (inst: Instrument) => {
+    const localSignals: ScanSignal[] = [];
     for (const tf of tfList) {
       const { candles, livePrice, source } = await getCandlesLive(inst.symbol, tf);
       if (candles.length < 30) continue;
-      if (livePrice != null) { livePrices[inst.symbol] = livePrice; anyLive = true; }
+      if (livePrice != null) { livePrices[inst.symbol] = livePrice; if (source === "live") anyLive = true; }
 
       // Layer 2 pre-filter (4-layer architecture)
       if (filterKeys && Array.isArray(filterKeys) && filterKeys.length > 0) {
@@ -115,7 +117,7 @@ export async function POST(req: NextRequest) {
         const uniqueBaseKeys = Array.from(new Set(baseKeys));
         const validKeys = uniqueBaseKeys.filter((k) => Object.keys(TREND_SCANNERS).includes(k));
         const trendSignals = await runTrendScan(ctx, validKeys);
-        allSignals.push(...trendSignals);
+        localSignals.push(...trendSignals);
       }
       // ICT scanners (except 2022 model — handled separately)
       if (!strategyType || strategyType === "ict" || strategyType === "all") {
@@ -126,7 +128,7 @@ export async function POST(req: NextRequest) {
         const uniqueBaseKeys = Array.from(new Set(baseKeys));
         const validKeys = uniqueBaseKeys.filter((k) => Object.keys(ICT_SCANNERS).includes(k));
         const ictSignals = await runICTScan(ctx, validKeys);
-        allSignals.push(...ictSignals);
+        localSignals.push(...ictSignals);
       }
       // EA scanners (user-provided profitable EAs)
       if (strategyType === "ea" || strategyType === "all") {
@@ -134,7 +136,7 @@ export async function POST(req: NextRequest) {
           ? eaKeys
           : Object.keys(EA_SCANNERS);
         const eaSignals = await runEAScan(ctx, eaList);
-        allSignals.push(...eaSignals);
+        localSignals.push(...eaSignals);
       }
       // HORC scanners (5th family — all 12 chapters)
       if (strategyType === "horc" || strategyType === "all") {
@@ -145,7 +147,7 @@ export async function POST(req: NextRequest) {
           const fn = HORC_SCANNERS[hk];
           try {
             const sig = await fn(ctx);
-            if (sig) allSignals.push(sig);
+            if (sig) localSignals.push(sig);
           } catch (err) {
             console.error(`[scanner] HORC ${hk} failed:`, err);
           }
@@ -156,7 +158,7 @@ export async function POST(req: NextRequest) {
     if ((!strategyType || strategyType === "ict" || strategyType === "all") &&
         (!strategies || strategies.length === 0 || strategies.includes("ict-2022-model"))) {
       const m2022 = await model2022Scanner(inst.symbol, inst.display, inst.assetClass, "1d", "4h", "1h");
-      if (m2022) allSignals.push(m2022);
+      if (m2022) localSignals.push(m2022);
     }
     // Trader scanners
     if (strategyType === "trader" || strategyType === "all") {
@@ -165,15 +167,29 @@ export async function POST(req: NextRequest) {
         : TRADER_STRATEGIES.map((t) => t.key);
       for (const tk of traders) {
         const result = await runTraderScan(tk, inst.symbol, inst.display, inst.assetClass);
-        if (result) allSignals.push(traderResultToSignal(result));
+        if (result) localSignals.push(traderResultToSignal(result));
       }
     }
-  }
+    return localSignals;
+  };
 
-  // Apply universal A+/A/B+/B-/C grading to ALL signals (per Untitled.txt:
-  // "src/app/api/scanner/route.ts — POST handler applies applyGrade() to all
-  //  signals before returning, persists grade to DB")
-  applyGradeAll(allSignals);
+  // ── Concurrency pool: fetch + scan N instruments at a time ──
+  // Turns a serial 46×2 fetch chain (~60s+) into ~8 parallel lanes (~10s)
+  const CONCURRENCY = 8;
+  const queue = [...instruments];
+  const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
+    while (queue.length > 0) {
+      const inst = queue.shift();
+      if (!inst) break;
+      try {
+        const sigs = await scanInstrument(inst);
+        allSignals.push(...sigs);
+      } catch (err) {
+        console.error(`[scanner] instrument ${inst.symbol} failed:`, err);
+      }
+    }
+  });
+  await Promise.all(workers);
 
   // Apply universal A+/A/B+/B-/C grading to ALL signals
   applyGradeAll(allSignals);
@@ -206,9 +222,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Dispatch alerts (best-effort)
+  // Dispatch alerts (MUST await — on serverless the process freezes when the
+  // response returns, so fire-and-forget here means alerts never actually send)
   if (shouldDispatch) {
-    dispatchAlerts(filtered).catch((err) => console.error("[scanner] dispatch error:", err));
+    try {
+      await dispatchAlerts(filtered);
+    } catch (err) {
+      console.error("[scanner] dispatch error:", err);
+    }
   }
 
   return NextResponse.json({
@@ -220,6 +241,8 @@ export async function POST(req: NextRequest) {
       strategyType,
       minScore: minScoreVal,
       filtersApplied: filterKeys ?? [],
+      live: anyLive,
+      livePrices,
     },
   });
 }

@@ -184,8 +184,16 @@ export async function GET(req: NextRequest) {
       body: JSON.stringify({
         strategyType: "all",
         instruments: [
+          // Forex majors (7)
           "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", "USDCHF=X", "NZDUSD=X",
-          "BTC-USD", "ETH-USD", "GC=F", "^GSPC", "^NDX"
+          // Forex crosses (4)
+          "EURJPY=X", "GBPJPY=X", "EURGBP=X", "AUDJPY=X",
+          // Crypto (5)
+          "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD",
+          // Commodities (3)
+          "GC=F", "SI=F", "CL=F",
+          // Indices (5)
+          "^GSPC", "^NDX", "^DJI", "US500=F", "USTEC=F",
         ],
         timeframes: ["4h", "1d"],
         minScore: 30,
