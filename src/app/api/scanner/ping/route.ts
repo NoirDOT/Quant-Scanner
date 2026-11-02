@@ -173,8 +173,11 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Normal mode: run a full scan ───────────────────────────
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
+  // NOTE: do NOT use VERCEL_URL here — deployment URLs are protected by
+  // "Vercel Authentication" (SSO) and return 401 for self-fetches.
+  // The production domain is publicly accessible, so use it directly.
+  const baseUrl = process.env.SCANNER_PUBLIC_URL
+    ? process.env.SCANNER_PUBLIC_URL
     : "https://quant-scanner-g7r7.vercel.app";
 
   try {
