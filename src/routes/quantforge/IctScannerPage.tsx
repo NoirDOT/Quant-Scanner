@@ -39,20 +39,28 @@ const SCAN_INTERVALS = {
   slow: 60 * 60 * 1000,
 };
 
-// Curated instrument list — not all 50+. Keeps the scan fast (under 10s on Vercel).
+// Curated instrument list (24) — matches the cron scan. Browser scan takes ~60-90s.
 // Covers forex majors + crypto + gold + indices.
 const INSTRUMENTS = [
+  // Forex majors (7)
   "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", "USDCHF=X", "NZDUSD=X",
-  "BTC-USD", "ETH-USD",
-  "GC=F",
-  "^GSPC", "^NDX",
+  // Forex crosses (4)
+  "EURJPY=X", "GBPJPY=X", "EURGBP=X", "AUDJPY=X",
+  // Crypto (5)
+  "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD",
+  // Commodities (3)
+  "GC=F", "SI=F", "CL=F",
+  // Indices (5)
+  "^GSPC", "^NDX", "^DJI", "US500=F", "USTEC=F",
 ] as const;
 
 const ASSET_LABELS: Record<string, string> = {
   "EURUSD=X": "EUR/USD", "GBPUSD=X": "GBP/USD", "USDJPY=X": "USD/JPY",
   "AUDUSD=X": "AUD/USD", "USDCAD=X": "USD/CAD", "USDCHF=X": "USD/CHF", "NZDUSD=X": "NZD/USD",
-  "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum", "GC=F": "Gold",
-  "^GSPC": "S&P 500", "^NDX": "Nasdaq 100",
+  "EURJPY=X": "EUR/JPY", "GBPJPY=X": "GBP/JPY", "EURGBP=X": "EUR/GBP", "AUDJPY=X": "AUD/JPY",
+  "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum", "SOL-USD": "Solana", "XRP-USD": "XRP", "DOGE-USD": "Dogecoin",
+  "GC=F": "Gold", "SI=F": "Silver", "CL=F": "Crude Oil",
+  "^GSPC": "S&P 500", "^NDX": "Nasdaq 100", "^DJI": "Dow Jones", "US500=F": "US500", "USTEC=F": "USTEC",
 };
 
 export function IctScannerPage() {
