@@ -7,5 +7,11 @@ db/
 .env.local
 .env.*.local
 download/backtest-results.json
-data/csv/*.csv
-!data/csv/.gitkeep
+# Keep 4h + 1d CSVs (scanner needs them — Yahoo is blocked on Vercel)
+# Ignore larger 1h files to keep repo lean
+data/csv/*_1h.csv
+data/csv/*_H1.csv
+data/csv/*_2h.csv
+data/csv/*_H2.csv
+data/csv/*_1w.csv
+data/csv/*_W1.csv
