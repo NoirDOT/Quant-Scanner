@@ -1,7 +1,6 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/app/api/scanner/candidates/route.ts
+// src/app/api/scanner/candidates/route.ts
 // Layer 1 filter endpoint — lightweight boolean checks (no entry/stop/target).
 //
-// Reconstructed from Untitled.txt:
 //   "Build /api/scanner/candidates (lightweight filter-only endpoint)"
 //   Returns ScanCandidate[] (symbol+tf+direction+reasons, no entry/stop/target).
 //   Run every 5 min via Discord bot.

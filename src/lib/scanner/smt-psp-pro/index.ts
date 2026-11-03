@@ -1,6 +1,6 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/smt-psp-pro/index.ts
+// src/lib/scanner/smt-psp-pro/index.ts
 // SMT/PSP PRO scanner engine — reconstructed from the Pine Script source
-// documented in Untitled.txt (the SMT/PSP PRO Pine Script pasted at the end
+// documented in the project spec (the SMT/PSP PRO Pine Script pasted at the end
 // of the chat history, ~700 lines of Pine v6 code).
 //
 // The Pine Script implements:
@@ -40,7 +40,7 @@ export interface PairMapping {
 }
 
 /**
- * Auto-pair router. Maps any symbol → correlated pair(s) per HORC Untitled.txt:
+ * Auto-pair router. Maps any symbol → correlated pair(s) per HORC the project spec:
  *   EURUSD → GBPUSD + USDCHF (triad)
  *   GBPUSD → EURUSD + USDCHF (triad)
  *   USDJPY → EURJPY + GBPJPY (triad, JPY crosses)

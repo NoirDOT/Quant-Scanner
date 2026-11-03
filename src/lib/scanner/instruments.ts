@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/instruments.ts
+// src/lib/scanner/instruments.ts
 // Comprehensive instrument universe for the multi-strategy scanner.
 // Covers Forex, Crypto, Commodities, US Stocks (large caps), and Indices.
 

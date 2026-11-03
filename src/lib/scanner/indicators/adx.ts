@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/indicators/adx.ts
+// src/lib/scanner/indicators/adx.ts
 // Wilder's ADX (Average Directional Index) with +DI / -DI
 
 export interface ADXState {

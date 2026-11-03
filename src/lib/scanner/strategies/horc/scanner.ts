@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/strategies/horc/scanner.ts
+// src/lib/scanner/strategies/horc/scanner.ts
 // HORC scanner family — wraps the orchestrator as a ScannerFn.
 //
 // Per the HORC Visual Study Guide (12 chapters), this scanner:

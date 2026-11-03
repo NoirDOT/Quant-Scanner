@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/strategies/horc/types.ts
+// src/lib/scanner/strategies/horc/types.ts
 // HORC (Market Structure & Price Action) — type definitions.
 //
 // Implements the framework documented in HORC_Visual_Study_Guide.pdf:

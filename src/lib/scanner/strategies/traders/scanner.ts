@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/strategies/traders/scanner.ts
+// src/lib/scanner/strategies/traders/scanner.ts
 // Executes each trader's strategy ruleset against multi-timeframe price data
 // and produces a composite score + signal
 

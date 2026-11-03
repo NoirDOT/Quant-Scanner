@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/alerts/email.ts
+// src/lib/scanner/alerts/email.ts
 import nodemailer from "nodemailer";
 import type { ScanSignal } from "../types";
 

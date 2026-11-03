@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/strategies/eas/scanners.ts
+// src/lib/scanner/strategies/eas/scanners.ts
 // Implements scanner functions for 10 of the most validated EAs from the user's catalog.
 // Each scanner mirrors the EA's MQL5 logic and returns a ScanSignal with the EA's claimed
 // backtest stats so the user can compare scanner vs EA results.

@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/indicators/atr.ts
+// src/lib/scanner/indicators/atr.ts
 
 export function trueRange(
   highs: number[],

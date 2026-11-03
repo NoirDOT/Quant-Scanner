@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/ict/liquidity.ts
+// src/lib/scanner/ict/liquidity.ts
 // Liquidity sweeps: stops above equal highs / below equal lows
 
 import type { Candle } from "../data";

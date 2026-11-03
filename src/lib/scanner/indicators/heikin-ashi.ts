@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/indicators/heikin-ashi.ts
+// src/lib/scanner/indicators/heikin-ashi.ts
 
 export interface HAState {
   open: number;

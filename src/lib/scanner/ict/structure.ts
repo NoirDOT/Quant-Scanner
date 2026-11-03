@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/ict/structure.ts
+// src/lib/scanner/ict/structure.ts
 // Market structure detection — swing highs, swing lows, BOS, CHoCH
 import type { Candle } from "../data";
 

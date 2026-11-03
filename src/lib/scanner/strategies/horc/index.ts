@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/strategies/horc/index.ts
+// src/lib/scanner/strategies/horc/index.ts
 // HORC scanner family — exports all 12 chapters + the orchestrator.
 
 export * from "./types";

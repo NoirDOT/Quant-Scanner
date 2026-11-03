@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/backtest/engine.ts
+// src/lib/scanner/backtest/engine.ts
 // Walk-forward backtester with win-rate, R:R, max DD, profit factor, equity curve
 
 import type { Candle } from "../data";

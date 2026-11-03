@@ -1,4 +1,4 @@
-// /home/z/my-project/src/app/api/instruments/route.ts
+// src/app/api/instruments/route.ts
 import { NextResponse } from "next/server";
 import { INSTRUMENTS, TIMEFRAMES, ASSET_CLASS_LABELS, type AssetClass } from "@/lib/scanner/instruments";
 

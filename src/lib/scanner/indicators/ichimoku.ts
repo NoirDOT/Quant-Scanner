@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/indicators/ichimoku.ts
+// src/lib/scanner/indicators/ichimoku.ts
 
 export interface IchimokuState {
   tenkan: number;

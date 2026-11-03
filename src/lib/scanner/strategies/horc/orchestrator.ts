@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/strategies/horc/orchestrator.ts
+// src/lib/scanner/strategies/horc/orchestrator.ts
 // HORC Chapter 12: Putting it together — the chart walkthrough.
 //
 // Per the HORC Visual Study Guide, the repeatable study process:

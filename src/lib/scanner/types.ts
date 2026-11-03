@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/types.ts
+// src/lib/scanner/types.ts
 // Shared types for strategies & scan results.
 //
 // EXTENDED in this rebuild:

@@ -1,7 +1,6 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/app/api/scanner/stress-tests/route.ts
+// src/app/api/scanner/stress-tests/route.ts
 // Kieranduff 6-test robustness suite — runs on any scanner family.
 //
-// Reconstructed from Untitled.txt descriptions:
 //   1. Monte Carlo: resample trades N times → P5 return + P95 DD.
 //      Pass: P5 return > 0 AND P95 DD < 2× historical.
 //   2. Walk-Forward: split into N windows, IS vs OOS comparison.

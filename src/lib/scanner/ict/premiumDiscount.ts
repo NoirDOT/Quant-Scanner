@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/ict/premiumDiscount.ts
+// src/lib/scanner/ict/premiumDiscount.ts
 // Premium / Discount zones — above 50% of dealing range = premium, below = discount
 
 import type { Candle } from "../data";

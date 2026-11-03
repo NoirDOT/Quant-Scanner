@@ -3,11 +3,31 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import {
   RefreshCw, Clock, ArrowUp, ArrowDown, Zap, Radio,
-  ChevronRight, ArrowLeft, Layers, Eye,
+  ChevronRight, ArrowLeft, Layers, Eye, Filter, TrendingUp, TrendingDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ScanSignal } from "@/lib/scanner/types";
+
+// ─── Setup type (mirrors src/lib/scanner/consolidate.ts Setup) ────────────────
+
+interface Setup {
+  symbol: string;
+  display: string;
+  assetClass: string;
+  direction: "long" | "short";
+  families: string[];
+  timeframes: string[];
+  strategyCount: number;
+  rr: number;
+  score: number;
+  conflicted: boolean;
+  best: ScanSignal;
+  allSignals: ScanSignal[];
+  regime?: "bull" | "bear" | "sideways";
+  regimeLabel?: string;
+  regimeFits?: boolean;
+}
 
 // ─── Validated scanners (handbook tier) ────────────────────────────────────
 
@@ -80,6 +100,8 @@ function strategyLabel(signal: ScanSignal): string {
 
 export function IctScannerPage() {
   const [signals, setSignals] = useState<ScanSignal[]>([]);
+  const [setups, setSetups] = useState<Setup[]>([]);
+  const [conflictedSetups, setConflictedSetups] = useState<Setup[]>([]);
   const [loading, setLoading] = useState(false);
   const [autoScan, setAutoScan] = useState(true);
   const [scanInterval, setScanInterval] = useState<"fast" | "medium" | "slow">("medium");
@@ -90,6 +112,9 @@ export function IctScannerPage() {
   const [error, setError] = useState<string | null>(null);
   const [familyFilter, setFamilyFilter] = useState<string>("all");
   const [selectedStrategy, setSelectedStrategy] = useState<string | null>(null);
+  // View mode: "setups" = consolidated tradeable setups (default), "raw" = all
+  // signals grouped by strategy (the old card view, kept for debugging).
+  const [viewMode, setViewMode] = useState<"setups" | "raw">("setups");
 
   const runScan = useCallback(async (silent = false) => {
     setLoading(true);
@@ -117,6 +142,8 @@ export function IctScannerPage() {
       }
       const json = await res.json();
       setSignals(json.signals ?? []);
+      setSetups(json.setups ?? []);
+      setConflictedSetups(json.conflictedSetups ?? []);
       setLastScan(new Date());
       setIsLive(!!json.meta?.live);
     } catch (e) {
@@ -279,6 +306,7 @@ export function IctScannerPage() {
 
           {/* ─── Stats row ─── */}
           <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2">
+            <Stat icon={<Filter size={13} />} value={setups.length} label="SETUPS" />
             <Stat icon={<Radio size={13} />} value={signals.length} label="SIGNALS" />
             <Stat icon={<Layers size={13} />} value={strategyGroups.length} label="STRATEGIES" />
             <Stat icon={<Eye size={13} />} value={pairsCovered} label="PAIRS" />
@@ -311,58 +339,269 @@ export function IctScannerPage() {
           <StrategyDetail group={selectedGroup} onBack={() => setSelectedStrategy(null)} />
         ) : (
           <>
-            {/* Family filter chips */}
-            <div className="mb-5 flex flex-wrap items-center gap-1.5">
-              <FilterChip
-                active={familyFilter === "all"}
-                onClick={() => setFamilyFilter("all")}
-                label="All"
-                count={signals.length}
-              />
-              {Object.entries(FAMILIES).map(([key, meta]) => {
-                const count = familyCounts[key] ?? 0;
-                if (count === 0) return null;
-                return (
-                  <FilterChip
-                    key={key}
-                    active={familyFilter === key}
-                    onClick={() => setFamilyFilter(key)}
-                    label={meta.label}
-                    count={count}
-                    color={meta.color}
-                  />
-                );
-              })}
+            {/* View toggle: Setups (default) vs Raw signals */}
+            <div className="mb-4 flex items-center gap-2">
+              <button
+                onClick={() => setViewMode("setups")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all",
+                  viewMode === "setups"
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    : "hover:opacity-80"
+                )}
+                style={viewMode !== "setups" ? { borderColor: "var(--rule)", color: "var(--ink-2)", background: "var(--paper)" } : undefined}
+              >
+                <Filter size={12} />
+                Setups
+                {setups.length > 0 && (
+                  <span className="font-mono text-[10px] font-bold">{setups.length}</span>
+                )}
+              </button>
+              <button
+                onClick={() => setViewMode("raw")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all",
+                  viewMode === "raw"
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    : "hover:opacity-80"
+                )}
+                style={viewMode !== "raw" ? { borderColor: "var(--rule)", color: "var(--ink-2)", background: "var(--paper)" } : undefined}
+              >
+                <Layers size={12} />
+                Raw signals
+                {signals.length > 0 && (
+                  <span className="font-mono text-[10px] font-bold">{signals.length}</span>
+                )}
+              </button>
             </div>
 
-            {/* Strategy cards grid OR loading/empty */}
-            {loading && signals.length === 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {Array.from({ length: 9 }).map((_, i) => (
-                  <Skeleton key={i} className="h-28 w-full rounded-xl" />
-                ))}
-              </div>
-            ) : filteredGroups.length === 0 ? (
-              <div className="rounded-xl border p-16 text-center" style={{ borderColor: "var(--rule)", background: "var(--paper-2)" }}>
-                <Radio className="h-10 w-10 mx-auto mb-4 opacity-20" style={{ color: "var(--ink-2)" }} />
-                <p className="font-serif text-lg italic" style={{ color: "var(--ink-2)" }}>No signals right now.</p>
-                <p className="font-mono text-[10px] mt-2" style={{ color: "var(--ink-2)" }}>
-                  Scanning {pairsCovered} pairs · next sweep in {intervalLabel}
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {filteredGroups.map(g => (
-                  <StrategyCard
-                    key={g.key}
-                    group={g}
-                    onClick={() => setSelectedStrategy(g.key)}
+            {/* ─── SETUPS VIEW (primary — the 600-signal fix) ─── */}
+            {viewMode === "setups" && (
+              <>
+                {loading && setups.length === 0 ? (
+                  <div className="space-y-3">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <Skeleton key={i} className="h-24 w-full rounded-xl" />
+                    ))}
+                  </div>
+                ) : setups.length === 0 ? (
+                  <div className="rounded-xl border p-16 text-center" style={{ borderColor: "var(--rule)", background: "var(--paper-2)" }}>
+                    <Filter className="h-10 w-10 mx-auto mb-4 opacity-20" style={{ color: "var(--ink-2)" }} />
+                    <p className="font-serif text-lg italic" style={{ color: "var(--ink-2)" }}>No tradeable setups right now.</p>
+                    <p className="font-mono text-[10px] mt-2" style={{ color: "var(--ink-2)" }}>
+                      Need ≥2 families agreeing on the same pair + direction, R:R ≥ 1.5, regime-aligned.
+                    </p>
+                    <p className="font-mono text-[10px] mt-1" style={{ color: "var(--ink-2)" }}>
+                      Raw signals: {signals.length} · next sweep in {intervalLabel}
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Setup list */}
+                    <div className="space-y-2 mb-6">
+                      {setups.map((s, i) => (
+                        <SetupRow key={`${s.symbol}-${s.direction}-${i}`} setup={s} />
+                      ))}
+                    </div>
+                    {/* Conflicted setups (separate "ignore" bucket) */}
+                    {conflictedSetups.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-2 mb-3 pb-2 border-b" style={{ borderColor: "var(--rule)" }}>
+                          <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>
+                            ⚠️ Conflicted ({conflictedSetups.length})
+                          </span>
+                        </div>
+                        <div className="space-y-2 opacity-50">
+                          {conflictedSetups.map((s, i) => (
+                            <SetupRow key={`conf-${s.symbol}-${s.direction}-${i}`} setup={s} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+
+            {/* ─── RAW SIGNALS VIEW (the old card grid, for debugging) ─── */}
+            {viewMode === "raw" && (
+              <>
+                {/* Family filter chips */}
+                <div className="mb-5 flex flex-wrap items-center gap-1.5">
+                  <FilterChip
+                    active={familyFilter === "all"}
+                    onClick={() => setFamilyFilter("all")}
+                    label="All"
+                    count={signals.length}
                   />
-                ))}
-              </div>
+                  {Object.entries(FAMILIES).map(([key, meta]) => {
+                    const count = familyCounts[key] ?? 0;
+                    if (count === 0) return null;
+                    return (
+                      <FilterChip
+                        key={key}
+                        active={familyFilter === key}
+                        onClick={() => setFamilyFilter(key)}
+                        label={meta.label}
+                        count={count}
+                        color={meta.color}
+                      />
+                    );
+                  })}
+                </div>
+
+                {/* Strategy cards grid OR loading/empty */}
+                {loading && signals.length === 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {Array.from({ length: 9 }).map((_, i) => (
+                      <Skeleton key={i} className="h-28 w-full rounded-xl" />
+                    ))}
+                  </div>
+                ) : filteredGroups.length === 0 ? (
+                  <div className="rounded-xl border p-16 text-center" style={{ borderColor: "var(--rule)", background: "var(--paper-2)" }}>
+                    <Radio className="h-10 w-10 mx-auto mb-4 opacity-20" style={{ color: "var(--ink-2)" }} />
+                    <p className="font-serif text-lg italic" style={{ color: "var(--ink-2)" }}>No signals right now.</p>
+                    <p className="font-mono text-[10px] mt-2" style={{ color: "var(--ink-2)" }}>
+                      Scanning {pairsCovered} pairs · next sweep in {intervalLabel}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {filteredGroups.map(g => (
+                      <StrategyCard
+                        key={g.key}
+                        group={g}
+                        onClick={() => setSelectedStrategy(g.key)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Setup row (the consolidated tradeable setup) ───────────────────────────
+
+function SetupRow({ setup }: { setup: Setup }) {
+  const isLong = setup.direction === "long";
+  const { best } = setup;
+  const fmtPrice = (p?: number) => {
+    if (p == null || !Number.isFinite(p)) return "—";
+    if (setup.assetClass === "forex") return p.toFixed(5);
+    if (setup.assetClass === "crypto") return p.toLocaleString("en-US", { maximumFractionDigits: 2 });
+    return p.toFixed(2);
+  };
+
+  const regimeColor =
+    setup.regime === "bull" ? "text-emerald-600 dark:text-emerald-400" :
+    setup.regime === "bear" ? "text-rose-500" :
+    "text-amber-500";
+  const regimeIcon =
+    setup.regime === "bull" ? <TrendingUp size={11} /> :
+    setup.regime === "bear" ? <TrendingDown size={11} /> :
+    null;
+
+  return (
+    <div
+      className={cn(
+        "rounded-xl border p-4 transition-colors",
+        isLong ? "border-emerald-500/20" : "border-rose-500/20"
+      )}
+      style={{ background: "var(--paper)" }}
+    >
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        {/* Direction + pair */}
+        <div className="flex items-center gap-2.5 min-w-[140px]">
+          <div className={cn(
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
+            isLong ? "bg-emerald-500/10" : "bg-rose-500/10"
+          )}>
+            {isLong ? <ArrowUp size={18} className="text-emerald-500" /> : <ArrowDown size={18} className="text-rose-500" />}
+          </div>
+          <div>
+            <div className="font-serif text-base font-semibold leading-tight" style={{ color: "var(--ink)" }}>{setup.display}</div>
+            <div className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>
+              {setup.timeframes.join(" · ").toUpperCase()}
+            </div>
+          </div>
+        </div>
+
+        {/* Setup score (big) */}
+        <div className="flex items-baseline gap-1.5 min-w-[70px]">
+          <span className="font-mono text-2xl font-bold" style={{ color: "var(--ink)" }}>{Math.round(setup.score)}</span>
+          <span className="font-mono text-[9px]" style={{ color: "var(--ink-2)" }}>setup</span>
+        </div>
+
+        {/* Families agreeing */}
+        <div className="flex items-center gap-1.5 flex-wrap min-w-[120px]">
+          {setup.families.map((f) => {
+            const meta = FAMILIES[f] ?? FAMILIES.trend;
+            return (
+              <span
+                key={f}
+                className={cn("rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider", meta.bgAlpha, meta.textClass)}
+              >
+                {meta.label}
+              </span>
+            );
+          })}
+          {setup.strategyCount > setup.families.length && (
+            <span className="font-mono text-[9px]" style={{ color: "var(--ink-2)" }}>
+              ×{setup.strategyCount}
+            </span>
+          )}
+        </div>
+
+        {/* Regime badge */}
+        {setup.regime && (
+          <div className={cn("flex items-center gap-1 font-mono text-[10px]", regimeColor)}>
+            {regimeIcon}
+            {setup.regime}
+          </div>
+        )}
+
+        {/* Entry / Stop / Target / R:R */}
+        {best.entryPrice && (
+          <div className="flex items-center gap-3 ml-auto">
+            <div className="text-right">
+              <div className="font-mono text-[9px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>ENTRY</div>
+              <div className="font-mono text-xs" style={{ color: "var(--ink)" }}>{fmtPrice(best.entryPrice)}</div>
+            </div>
+            {best.stopPrice && (
+              <div className="text-right">
+                <div className="font-mono text-[9px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>STOP</div>
+                <div className="font-mono text-xs text-rose-500">{fmtPrice(best.stopPrice)}</div>
+              </div>
+            )}
+            {best.targetPrice && (
+              <div className="text-right">
+                <div className="font-mono text-[9px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>TARGET</div>
+                <div className="font-mono text-xs text-emerald-500">{fmtPrice(best.targetPrice)}</div>
+              </div>
+            )}
+            <div className="text-right">
+              <div className="font-mono text-[9px] uppercase tracking-wider" style={{ color: "var(--ink-2)" }}>R:R</div>
+              <div className="font-mono text-xs font-semibold" style={{ color: "var(--ink)" }}>1:{setup.rr.toFixed(1)}</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Regime label + best strategy */}
+      <div className="mt-2 pt-2 border-t flex items-center gap-2" style={{ borderColor: "var(--rule)" }}>
+        {setup.regimeLabel && (
+          <span className="font-mono text-[10px]" style={{ color: "var(--ink-2)" }}>
+            {setup.regimeLabel}
+          </span>
+        )}
+        <span className="font-mono text-[10px] ml-auto" style={{ color: "var(--ink-2)" }}>
+          best: {best.strategyLabel} ({best.score})
+        </span>
       </div>
     </div>
   );

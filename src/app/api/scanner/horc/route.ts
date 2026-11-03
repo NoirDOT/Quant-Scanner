@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/app/api/scanner/horc/route.ts
+// src/app/api/scanner/horc/route.ts
 // HORC scanner API endpoint — runs the HORC orchestrator on a symbol+timeframe.
 //
 // POST /api/scanner/horc

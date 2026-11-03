@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/strategies/ict/index.ts
+// src/lib/scanner/strategies/ict/index.ts
 // ICT composite strategy — runs all 8 modules and composites a signal per timeframe
 
 import type { StrategyContext, ScanSignal, StrategyInfo } from "../../types";

@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/indicators/index.ts
+// src/lib/scanner/indicators/index.ts
 // Re-export every indicator for convenient use by strategies.
 
 export * from "./moving-averages";

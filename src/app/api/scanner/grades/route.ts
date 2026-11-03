@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/app/api/scanner/grades/route.ts
+// src/app/api/scanner/grades/route.ts
 // Grade distribution endpoint — returns A+/A/B+/B-/C counts per scanner.
 
 import { NextResponse } from "next/server";

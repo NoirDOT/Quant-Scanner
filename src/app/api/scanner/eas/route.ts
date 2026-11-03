@@ -1,4 +1,4 @@
-// /home/z/my-project/src/app/api/eas/route.ts
+// src/app/api/eas/route.ts
 import { NextResponse } from "next/server";
 import { EA_STRATEGIES, EA_CATEGORIES } from "@/lib/scanner/strategies/eas/definitions";
 import { promises as fs } from "fs";

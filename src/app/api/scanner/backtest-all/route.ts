@@ -1,7 +1,6 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/app/api/scanner/backtest-all/route.ts
+// src/app/api/scanner/backtest-all/route.ts
 // Backtest ALL scanners across instruments × timeframes.
 //
-// Reconstructed from Untitled.txt:
 //   "Build src/app/api/scanner/backtest-all/route.ts — runs backtests on every
 //    scanner × 6 instruments × 3 timeframes (1h/4h/1d) and aggregates"
 //
@@ -19,7 +18,6 @@ export async function POST(req: NextRequest) {
     timeframes = ["1h", "4h", "1d"],
   } = body;
 
-  // Default instruments: 6 from Untitled.txt (EURUSD, GBPUSD, USDJPY, XAUUSD, BTCUSD, US500)
   const defaultInstruments = [
     { symbol: "EURUSD", display: "EUR/USD", assetClass: "forex" },
     { symbol: "GBPUSD", display: "GBP/USD", assetClass: "forex" },

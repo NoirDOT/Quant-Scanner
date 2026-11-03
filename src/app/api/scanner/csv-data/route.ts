@@ -1,4 +1,4 @@
-// /home/z/my-project/src/app/api/csv-data/route.ts
+// src/app/api/csv-data/route.ts
 import { NextResponse } from "next/server";
 import { listCsvFiles } from "@/lib/scanner/data-csv";
 

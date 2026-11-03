@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/strategies/horc/zones.ts
+// src/lib/scanner/strategies/horc/zones.ts
 // HORC Chapters 8-9: Zones — active liquidity becomes a barrier; mitigation.
 //
 // Per the HORC Visual Study Guide:

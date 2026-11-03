@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/strategies/horc/or-cycle.ts
+// src/lib/scanner/strategies/horc/or-cycle.ts
 // HORC Chapter 3: Signals — the opening-range cycle.
 //
 // Per the HORC Visual Study Guide:

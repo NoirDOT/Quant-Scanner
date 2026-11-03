@@ -1,4 +1,4 @@
-// /home/z/my-project/src/app/api/alerts/route.ts
+// src/app/api/alerts/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { initTelegram, initEmail } from "@/lib/scanner/alerts";

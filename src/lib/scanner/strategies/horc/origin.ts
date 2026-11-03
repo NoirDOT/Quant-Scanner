@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/strategies/horc/origin.ts
+// src/lib/scanner/strategies/horc/origin.ts
 // HORC Chapters 1-2: Structure begins with the origin; permanent vs relative structure.
 //
 // Per the HORC Visual Study Guide:

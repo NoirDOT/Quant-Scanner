@@ -10,15 +10,18 @@
 //   - which timeframes agree (4h + 1d agreement is stronger than 4h alone)
 //   - the best entry/stop/target + R:R
 //   - a conflict flag when the opposite direction is also firing
+//   - the market regime (bull/bear/sideways) — attached by runScan
 //
 // A setup is GATED before ranking:
 //   - minimum 2 agreeing families (kills single-strategy noise)
 //   - minimum R:R (default 1.5)
 //   - price still near entry (within 0.5×ATR — stale setups dropped)
-//
-// Output is sorted by a blended score so you see the top setups first.
+//   - regime alignment (trend/EA signals suppressed in sideways + counter-trend)
+//   - ADR exhaustion (drop if price already moved >80% of average daily range)
 
 import type { ScanSignal } from "./types";
+import type { Regime, RegimeAssessment } from "./regime";
+import { strategyFitsRegime } from "./regime";
 
 export interface Setup {
   symbol: string;
@@ -33,6 +36,9 @@ export interface Setup {
   conflicted: boolean;                  // opposite direction also firing
   best: ScanSignal;                     // highest-scoring raw signal
   allSignals: ScanSignal[];             // every signal collapsed into this setup
+  regime?: Regime;                      // bull/bear/sideways (from runScan)
+  regimeLabel?: string;                 // human-readable regime
+  regimeFits?: boolean;                 // does the signal direction fit the regime?
 }
 
 export interface ConsolidateOptions {
@@ -40,6 +46,11 @@ export interface ConsolidateOptions {
   minRR?: number;         // default 1.5
   maxStaleAtrMultiple?: number; // default 0.5 — drop if price moved >0.5×ATR past entry
   livePrices?: Record<string, number | null>;
+  /** Per-symbol regime assessment (computed by runScan from the candle data). */
+  regimes?: Record<string, RegimeAssessment>;
+  /** Drop setups where the signal direction conflicts with the regime.
+   *  Default true — trend/EA counter-trend signals are suppressed. */
+  applyRegimeGate?: boolean;
 }
 
 export function consolidate(
@@ -49,6 +60,8 @@ export function consolidate(
   const minFamilies = opts.minFamilies ?? 2;
   const minRR = opts.minRR ?? 1.5;
   const livePrices = opts.livePrices ?? {};
+  const regimes = opts.regimes ?? {};
+  const applyRegimeGate = opts.applyRegimeGate ?? true;
 
   // Group all signals by symbol
   const bySymbol = new Map<string, ScanSignal[]>();
@@ -64,6 +77,8 @@ export function consolidate(
   let dropped = 0;
 
   for (const [symbol, sigs] of bySymbol) {
+    const regime = regimes[symbol];
+
     for (const dir of ["long", "short"] as const) {
       const side = sigs.filter((s) => s.direction === dir);
       if (side.length === 0) continue;
@@ -99,13 +114,31 @@ export function consolidate(
         }
       }
 
+      // Regime gate: suppress trend/EA signals that don't fit the regime
+      let regimeFits = true;
+      if (applyRegimeGate && regime) {
+        // Check the best signal's family — if it's trend/ea and the direction
+        // conflicts with the regime, drop the setup.
+        const bestFamily = best.strategyType as "trend" | "ict" | "trader" | "ea" | "horc" | "community";
+        regimeFits = strategyFitsRegime(bestFamily, regime.regime, dir);
+        if (!regimeFits) {
+          dropped++;
+          continue;
+        }
+      }
+
       // Blended setup score (placeholder weights — tune against forward-test data)
       // Start from the best signal's score, then reward cross-family + cross-TF
       // agreement, penalize conflicts.
-      const score = best.score
+      let score = best.score
         + 8 * (families.length - 1)              // +8 per additional family
         + (timeframes.length > 1 ? 10 : 0)      // +10 if 4h + 1d agree
         - (conflicted ? 15 : 0);                 // -15 if opposite direction firing
+
+      // Regime strength bonus: setups aligned with a strong regime get a boost
+      if (regime && regimeFits) {
+        score += regime.strength * 0.1;           // up to +10 for strong regime alignment
+      }
 
       const setup: Setup = {
         symbol,
@@ -120,6 +153,9 @@ export function consolidate(
         conflicted,
         best,
         allSignals: side,
+        regime: regime?.regime,
+        regimeLabel: regime?.label,
+        regimeFits,
       };
 
       if (conflicted) conflictedOut.push(setup);
@@ -132,3 +168,4 @@ export function consolidate(
 
   return { setups: accepted, conflicted: conflictedOut, dropped };
 }
+

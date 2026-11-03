@@ -1,5 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/strategies/graded-scanner.ts
-// Universal grade-aware scanner + catalog. Reconstructed from Untitled.txt
+// src/lib/scanner/strategies/graded-scanner.ts
 // descriptions. Wraps every scanner family with the grading layer.
 
 import type { ScanSignal, ScannerFn, StrategyContext, StrategyInfo } from "../types";

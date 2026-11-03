@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/strategies/horc/aoi.ts
+// src/lib/scanner/strategies/horc/aoi.ts
 // HORC Chapter 10: Areas of interest — source, path and destination.
 //
 // Per the HORC Visual Study Guide:

@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/ict/fvg.ts
+// src/lib/scanner/ict/fvg.ts
 // Fair Value Gap (FVG) detection — 3-candle imbalance
 
 import type { Candle } from "../data";

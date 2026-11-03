@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/ict/killzones.ts
+// src/lib/scanner/ict/killzones.ts
 // ICT Killzones & Silver Bullet windows — expressed in EST (UTC-5)
 // Times are from ICT's documented windows
 

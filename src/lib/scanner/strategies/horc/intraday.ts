@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/strategies/horc/intraday.ts
+// src/lib/scanner/strategies/horc/intraday.ts
 // HORC Chapter 11: Complex structures — intraday liquidity.
 //
 // Per the HORC Visual Study Guide:

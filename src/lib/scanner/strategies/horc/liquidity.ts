@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/strategies/horc/liquidity.ts
+// src/lib/scanner/strategies/horc/liquidity.ts
 // HORC Chapters 6-7: Liquidity — opposite participants and conditions.
 //
 // Per the HORC Visual Study Guide:

@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/indicators/macd.ts
+// src/lib/scanner/indicators/macd.ts
 
 import { ema } from "./moving-averages";
 

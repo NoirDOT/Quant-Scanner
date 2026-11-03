@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/indicators/supertrend.ts
+// src/lib/scanner/indicators/supertrend.ts
 
 import { atr } from "./atr";
 

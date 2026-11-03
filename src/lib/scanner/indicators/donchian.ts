@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/indicators/donchian.ts
+// src/lib/scanner/indicators/donchian.ts
 
 export interface DonchianState {
   upper: number;

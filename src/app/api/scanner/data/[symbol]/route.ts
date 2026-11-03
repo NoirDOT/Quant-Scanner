@@ -1,4 +1,4 @@
-// /home/z/my-project/src/app/api/data/[symbol]/route.ts
+// src/app/api/data/[symbol]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getCandles } from "@/lib/scanner/data";
 import { findInstrument } from "@/lib/scanner/instruments";

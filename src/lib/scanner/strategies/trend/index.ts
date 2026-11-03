@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/strategies/trend/index.ts
+// src/lib/scanner/strategies/trend/index.ts
 // Trend continuation strategies — 6 indicator families × 5 timeframes
 
 import type { StrategyContext, ScanSignal, ScannerFn, StrategyInfo } from "../../types";

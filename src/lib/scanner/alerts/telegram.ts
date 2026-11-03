@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/alerts/telegram.ts
+// src/lib/scanner/alerts/telegram.ts
 import { Telegraf } from "telegraf";
 import type { ScanSignal } from "../types";
 

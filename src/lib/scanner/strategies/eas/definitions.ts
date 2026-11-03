@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/strategies/eas/definitions.ts
+// src/lib/scanner/strategies/eas/definitions.ts
 // Catalog of 41 "Profitable EAs" — strategy rules + backtest stats parsed from MQL5 headers
 // Each entry includes the EA's claimed backtest metrics so the user can compare
 // scanner signals against EA validation results.

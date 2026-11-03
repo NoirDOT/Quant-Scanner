@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/indicators/rsi.ts
+// src/lib/scanner/indicators/rsi.ts
 import { sma } from "./moving-averages";
 
 export function rsi(closes: number[], period = 14): (number | null)[] {

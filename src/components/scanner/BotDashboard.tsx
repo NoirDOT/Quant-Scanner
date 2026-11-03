@@ -1,9 +1,8 @@
 "use client";
 
-// /home/z/my-project/build/hubb-final/HUBB/src/components/scanner/BotDashboard.tsx
+// src/components/scanner/BotDashboard.tsx
 // BOT Dashboard — universal grading + per-strategy performance + grade distribution.
 //
-// Reconstructed from Untitled.txt descriptions:
 //   - Shows grade distribution columns (A+/A/B+/B-/C count per scanner)
 //   - Top performers / failing scanners sections
 //   - "Backtest ALL N scanners" button → calls /api/scanner/backtest-all

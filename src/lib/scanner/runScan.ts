@@ -31,6 +31,7 @@ import { dispatchAlerts } from "./alerts";
 import { db } from "@/lib/db";
 import { loadCatalogStatsMap, attachCatalogStats, recordSymbolDataStatus } from "./catalogStats";
 import { consolidate, type Setup } from "./consolidate";
+import { classifyRegime, type RegimeAssessment } from "./regime";
 
 export interface RunScanOptions {
   strategyType?: string;             // "trend" | "ict" | "trader" | "ea" | "horc" | "all"
@@ -145,6 +146,9 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
   const allSignals: ScanSignal[] = [];
   const livePrices: Record<string, number | null> = {};
   const symbolDataStatus: RunScanMeta["symbolDataStatus"] = [];
+  /** Per-symbol regime assessment, computed from the daily candle data.
+   *  Used by consolidate() to gate counter-trend setups. */
+  const regimes: Record<string, import("./regime").RegimeAssessment> = {};
   let anyLive = false;
   let instrumentsSkipped = 0;
 
@@ -165,6 +169,16 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
       const lastClosed = candles[candles.length - 1];
       const barCloseMs = (lastClosed.time + barDurationSec(tf)) * 1000;
       const lastBarTime = lastClosed.time;
+
+      // Compute regime from the daily candle data (most stable timeframe for
+      // regime classification). We only need to do this once per symbol.
+      if (!regimes[inst.symbol] && tf === "1d" && candles.length >= 200) {
+        try {
+          regimes[inst.symbol] = classifyRegime(candles);
+        } catch (err) {
+          console.error(`[runScan] regime classify failed for ${inst.symbol}:`, err);
+        }
+      }
 
       symbolDataStatus.push({
         symbol: inst.symbol, timeframe: tf, candles: candles.length,
@@ -412,9 +426,10 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
   // Consolidate raw signals into tradeable setups (one per symbol + direction).
   // This is the unit the UI + Discord should surface — a full sweep produces
   // 500+ raw signals but typically only 3-10 setups survive the
-  // minFamilies + minRR gates.
+  // minFamilies + minRR + regime gates.
   const { setups, conflicted: conflictedSetups } = consolidate(filtered, {
     livePrices,
+    regimes,
   });
 
   const duration = Date.now() - startedAt;

@@ -1,4 +1,4 @@
-// /home/z/my-project/src/app/api/export/route.ts
+// src/app/api/export/route.ts
 // Export scan results or backtest results as CSV
 
 import { NextRequest, NextResponse } from "next/server";

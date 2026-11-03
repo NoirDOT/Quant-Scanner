@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/indicators/psar.ts
+// src/lib/scanner/indicators/psar.ts
 // Parabolic SAR
 
 export interface PSARState {

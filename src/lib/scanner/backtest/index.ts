@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/backtest/index.ts
+// src/lib/scanner/backtest/index.ts
 export * from "./engine";
 
 // Indicator-sweep backtest — runs all trend indicator strategies × timeframes

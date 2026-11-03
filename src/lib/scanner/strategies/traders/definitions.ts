@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/strategies/traders/definitions.ts
+// src/lib/scanner/strategies/traders/definitions.ts
 // Strategy definitions for 10 trader-specific scanners
 // Based on YouTube research + ICT-niche educated guesses (where noted)
 

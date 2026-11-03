@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/ict/index.ts
+// src/lib/scanner/ict/index.ts
 export * from "./structure";
 export * from "./fvg";
 export * from "./orderBlocks";

@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/strategies/horc/coordinates.ts
+// src/lib/scanner/strategies/horc/coordinates.ts
 // HORC Chapter 4: Coordinates — compare passive and aggressor across time.
 //
 // Per the HORC Visual Study Guide:

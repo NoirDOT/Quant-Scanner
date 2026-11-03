@@ -33,7 +33,71 @@ function fmtPrice(price: number | undefined, assetClass: string): string {
   return price.toFixed(5);
 }
 
-// ── Build a single signal embed ─────────────────────────────
+// ── TradingView deep link ───────────────────────────────────────────────────
+// Converts a Yahoo Finance symbol to a TradingView symbol + interval so the
+// user can click straight from the Discord alert into a chart with the
+// entry/stop/target visible.
+function tradingViewSymbol(yahooSymbol: string, assetClass: string): string {
+  // Forex: EURUSD=X → FX:EURUSD
+  if (assetClass === "forex") {
+    const pair = yahooSymbol.replace("=X", "");
+    // JPY pairs → FX_IDC, others → FX
+    return pair.endsWith("JPY") ? `FX_IDC:${pair}` : `FX:${pair}`;
+  }
+  // Crypto: BTC-USD → BINANCE:BTCUSDT  (or COINBASE:BTCUSD as fallback)
+  if (assetClass === "crypto") {
+    const base = yahooSymbol.replace(/-USD$/, "").replace(/-USDT$/, "");
+    return `BINANCE:${base}USDT`;
+  }
+  // Commodities: GC=F → TVC:GOLD, CL=F → TVC:USOIL, SI=F → TVC:SILVER
+  if (assetClass === "commodity") {
+    const map: Record<string, string> = {
+      "GC=F": "TVC:GOLD",
+      "SI=F": "TVC:SILVER",
+      "CL=F": "TVC:USOIL",
+      "BZ=F": "TVC:UKOIL",
+      "NG=F": "TVC:NATGAS",
+      "HG=F": "TVC:COPPER",
+      "PL=F": "TVC:PLATINUM",
+      "XAUUSD=X": "TVC:GOLD",
+    };
+    return map[yahooSymbol] ?? `TVC:${yahooSymbol.replace("=F", "")}`;
+  }
+  // Indices: ^GSPC → SP:SPX, ^NDX → NASDAQ:NDX, ^DJI → DJI:DJI
+  if (assetClass === "index") {
+    const map: Record<string, string> = {
+      "^GSPC": "SP:SPX",
+      "^NDX": "NASDAQ:NDX",
+      "^DJI": "DJI:DJI",
+      "^RUT": "I:RUT",
+      "US500=F": "SP:SPX",
+      "USTEC=F": "NASDAQ:NDX",
+      "US30=F": "DJI:DJI",
+    };
+    return map[yahooSymbol] ?? yahooSymbol;
+  }
+  return yahooSymbol;
+}
+
+function tradingViewInterval(timeframe: string): string {
+  switch (timeframe) {
+    case "1h": return "60";
+    case "2h": return "120";
+    case "4h": return "240";
+    case "1d": return "D";
+    case "1w": return "W";
+    default: return "240";
+  }
+}
+
+function tradingViewUrl(signal: ScanSignal): string {
+  const tvSym = tradingViewSymbol(signal.symbol, signal.assetClass);
+  const tvInt = tradingViewInterval(signal.timeframe);
+  // Build a URL that opens TradingView with the symbol + interval pre-filled
+  return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym)}&interval=${tvInt}`;
+}
+
+// ── Build a single signal embed ─────────────────────────────────────────────
 export function buildSignalEmbed(signal: ScanSignal) {
   const isLong = signal.direction === "long";
   const arrow = isLong ? "🟢" : "🔴";
@@ -73,6 +137,14 @@ export function buildSignalEmbed(signal: ScanSignal) {
     const conf = Math.round((signal.gradeFactors.confluenceScore / 25) * 100);
     fields.push({ name: "Confluence", value: `${conf}%`, inline: true });
   }
+
+  // TradingView deep link — click straight into a chart with this symbol + interval
+  const tvUrl = tradingViewUrl(signal);
+  fields.push({
+    name: "Chart",
+    value: `[📊 Open in TradingView](${tvUrl})`,
+    inline: false,
+  });
 
   const reasonsText = signal.reasons?.slice(0, 4).map(r => `▸ ${r}`).join("\n") ?? "";
 

@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/indicators/moving-averages.ts
+// src/lib/scanner/indicators/moving-averages.ts
 // EMA, SMA, and stacked EMA detector.
 
 export function sma(values: number[], period: number): (number | null)[] {

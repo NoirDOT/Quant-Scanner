@@ -1,4 +1,4 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/lib/scanner/strategies/horc/opposition.ts
+// src/lib/scanner/strategies/horc/opposition.ts
 // HORC Chapter 5: The opposition rule and timeframe selection.
 //
 // Per the HORC Visual Study Guide:

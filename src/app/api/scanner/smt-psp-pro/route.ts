@@ -1,7 +1,7 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/app/api/scanner/smt-psp-pro/route.ts
+// src/app/api/scanner/smt-psp-pro/route.ts
 // SMT/PSP PRO dedicated endpoint.
 //
-// Per Untitled.txt: "create a dedicated API endpoint" for SMT/PSP PRO.
+// Per the project spec: "create a dedicated API endpoint" for SMT/PSP PRO.
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCandles } from "@/lib/scanner/data";

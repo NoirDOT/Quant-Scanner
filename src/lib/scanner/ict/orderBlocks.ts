@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/ict/orderBlocks.ts
+// src/lib/scanner/ict/orderBlocks.ts
 // Order Block detection — last opposing candle before BOS/displacement
 
 import type { Candle } from "../data";

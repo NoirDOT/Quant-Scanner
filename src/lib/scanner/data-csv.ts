@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/data-csv.ts
+// src/lib/scanner/data-csv.ts
 // CSV-backed data adapter — reads user-provided OHLC history from /home/z/my-project/data/csv/
 // Falls back to Yahoo Finance when CSV is missing for a given symbol/timeframe.
 

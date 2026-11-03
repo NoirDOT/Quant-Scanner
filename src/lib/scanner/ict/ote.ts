@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/ict/ote.ts
+// src/lib/scanner/ict/ote.ts
 // OTE (Optimal Trade Entry) — fib 0.62 / 0.705 / 0.79 retracement zone with FVG confluence
 
 import type { Candle } from "../data";

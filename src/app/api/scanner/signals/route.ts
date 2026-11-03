@@ -1,7 +1,6 @@
-// /home/z/my-project/build/hubb-final/HUBB/src/app/api/scanner/signals/route.ts
+// src/app/api/scanner/signals/route.ts
 // Layer 2 strategy endpoint — full execution rule sets with entry/stop/target/R:R/score.
 //
-// Reconstructed from Untitled.txt:
 //   "Build /api/scanner/signals (full strategy execution)"
 //   Takes ScanCandidate[] + ScanContext → ExecutionSignal[].
 

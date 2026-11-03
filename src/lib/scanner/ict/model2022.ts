@@ -1,4 +1,4 @@
-// /home/z/my-project/src/lib/scanner/ict/model2022.ts
+// src/lib/scanner/ict/model2022.ts
 // ICT 2022 Mentorship Model — top-down HTF draw on 1W/1D, refine on 4H, entry on 1H/15m
 // We model this as a multi-timeframe composite: needs HTF bias + MTF confirmation + LTF entry
 
