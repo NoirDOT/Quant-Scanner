@@ -72,14 +72,25 @@ export async function loadCatalogStatsMap(): Promise<StatsMap> {
 
 /**
  * Attach metadata.catalogStats to each signal from the cached stats map.
- * Signals whose strategyKey has no backtest data are left untouched (so
+ *
+ * Live signals carry keys like `trend-ema-4h`, `ict-fvg-1d`, `ea-…-4h`, but
+ * BacktestByGrade rows are keyed by the BASE strategy key (`trend-ema`,
+ * `ict-fvg`, `ea-…`). So we strip the trailing timeframe suffix before lookup.
+ *
+ * Signals whose base key has no backtest data are left untouched (so
  * catalogScore falls back to family defaults).
  */
+function baseStrategyKey(strategyKey: string): string {
+  return strategyKey.replace(/-(1h|2h|4h|1d|1w)$/, "");
+}
+
 export function attachCatalogStats(signals: ScanSignal[], statsMap?: StatsMap): void {
   const map = statsMap ?? (globalThis as any).__scannerCatalogStats as StatsMap | undefined;
   if (!map) return;
   for (const s of signals) {
-    const stats = map.get(s.strategyKey);
+    // Try the full key first (trader keys like `trader-jadecapfx` have no TF suffix),
+    // then fall back to the base key (strips `-4h`, `-1d` etc.)
+    const stats = map.get(s.strategyKey) ?? map.get(baseStrategyKey(s.strategyKey));
     if (stats) {
       s.metadata = {
         ...(s.metadata ?? {}),

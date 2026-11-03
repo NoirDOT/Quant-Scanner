@@ -30,6 +30,7 @@ import type { ScanSignal } from "./types";
 import { dispatchAlerts } from "./alerts";
 import { db } from "@/lib/db";
 import { loadCatalogStatsMap, attachCatalogStats, recordSymbolDataStatus } from "./catalogStats";
+import { consolidate, type Setup } from "./consolidate";
 
 export interface RunScanOptions {
   strategyType?: string;             // "trend" | "ict" | "trader" | "ea" | "horc" | "all"
@@ -63,12 +64,20 @@ export interface RunScanMeta {
   forwardSignalsWritten: number;
   dispatched: number;
   deduped: number;
+  setupCount: number;
+  conflictedSetupCount: number;
   duration: number;
 }
 
 export interface RunScanResult {
   count: number;
   signals: ScanSignal[];
+  /** Consolidated tradeable setups (one per symbol + direction). Empty if
+   *  fewer than minFamilies agree on every pair. Use this for the UI + Discord. */
+  setups: Setup[];
+  /** Setups where the opposite direction is also firing (separated so the UI
+   *  can show them in an "ignore" bucket). */
+  conflictedSetups: Setup[];
   meta: RunScanMeta;
 }
 
@@ -242,6 +251,9 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
         (!strategies || strategies.length === 0 || strategies.includes("ict-2022-model"))) {
       const m2022 = await model2022Scanner(inst.symbol, inst.display, inst.assetClass, "1d", "4h", "1h");
       if (m2022) {
+        // The 2022 model uses 1h/4h/1d data internally — use now as the bar
+        // close time (it evaluates at the sweep moment). barTime is left unset
+        // so dedupe falls back to per-sweep dedupe (no cross-sweep suppression).
         m2022.metadata = { ...(m2022.metadata ?? {}), barCloseMs: Date.now() };
         localSignals.push(m2022);
       }
@@ -263,8 +275,11 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
       );
       for (const result of traderResults) {
         if (result) {
+          // traderResultToSignal now carries barTime + barCloseMs from the
+          // trader scanner (the LTF closed bar's close time). Do NOT overwrite
+          // with Date.now() — that would re-introduce the scan-time killzone
+          // bug and break cross-sweep dedupe.
           const sig = traderResultToSignal(result);
-          sig.metadata = { ...(sig.metadata ?? {}), barCloseMs: Date.now() };
           localSignals.push(sig);
         }
       }
@@ -293,8 +308,8 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
   const filtered = allSignals.filter((s) => s.score >= minScoreVal);
   filtered.sort((a, b) => b.score - a.score);
 
-  // Persist (best-effort)
-  let forwardSignalsWritten = 0;
+  // Persist ScanResult rows (best-effort) — one row per filtered signal.
+  // This is the historical record (queryable via /api/scanner/signals).
   if (shouldPersist) {
     try {
       await db.scanResult.createMany({
@@ -316,32 +331,6 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
     } catch (err) {
       console.error("[scanner] persist error:", err);
     }
-
-    // Write ForwardTestSignal rows so a nightly replay can resolve outcomes
-    if (shouldTrackForward) {
-      try {
-        const fwdRows = filtered.map((s) => ({
-          strategyKey: s.strategyKey,
-          family: s.strategyType,
-          symbol: s.symbol,
-          timeframe: s.timeframe,
-          direction: s.direction,
-          entryPrice: s.entryPrice ?? 0,
-          stopPrice: s.stopPrice ?? 0,
-          targetPrice: s.targetPrice ?? 0,
-          score: s.score,
-          grade: s.grade ?? null,
-          reasonsJson: JSON.stringify(s.reasons),
-          barTime: s.metadata?.barTime ?? null,
-        }));
-        if (fwdRows.length > 0) {
-          const r = await db.forwardTestSignal.createMany({ data: fwdRows as any });
-          forwardSignalsWritten = r.count;
-        }
-      } catch (err) {
-        console.error("[scanner] forward test signal write error:", err);
-      }
-    }
   }
 
   // Record per-symbol data status (best-effort)
@@ -353,24 +342,88 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
     }
   }
 
-  // Dispatch alerts (cross-sweep deduped via DispatchedSignal table)
+  // Dispatch alerts (cross-sweep deduped via DispatchedSignal table).
+  // dispatchAlerts returns the list of signals it ACTUALLY dispatched
+  // (after dedupe + cap), which we use below for forward-test tracking.
   let dispatched = 0;
   let deduped = 0;
+  let dispatchedSignals: ScanSignal[] = [];
   if (shouldDispatch) {
     try {
       const result = await dispatchAlerts(filtered, { trackForward: shouldTrackForward });
       dispatched = result.dispatched;
       deduped = result.deduped;
+      dispatchedSignals = result.dispatchedSignals;
     } catch (err) {
       console.error("[scanner] dispatch error:", err);
     }
   }
+
+  // Write ForwardTestSignal rows ONLY for dispatched signals (not every
+  // filtered signal). The unique constraint on
+  // (strategyKey, symbol, timeframe, direction, barTime) prevents the same
+  // setup being written 6× per day for a persistent signal. Signals with
+  // no entry/stop/target are skipped (can't compute R multiple without them).
+  let forwardSignalsWritten = 0;
+  if (shouldTrackForward && dispatchedSignals.length > 0) {
+    try {
+      // Filter out signals missing entry/stop/target — they'd produce 0
+      // values that make outcome replay meaningless.
+      const fwdRows = dispatchedSignals
+        .filter((s) => s.entryPrice != null && s.stopPrice != null && s.targetPrice != null)
+        .map((s) => ({
+          strategyKey: s.strategyKey,
+          family: s.strategyType,
+          symbol: s.symbol,
+          timeframe: s.timeframe,
+          direction: s.direction,
+          entryPrice: s.entryPrice!,
+          stopPrice: s.stopPrice!,
+          targetPrice: s.targetPrice!,
+          score: s.score,
+          grade: s.grade ?? null,
+          reasonsJson: JSON.stringify(s.reasons),
+          barTime: s.metadata?.barTime ?? null,
+        }));
+      if (fwdRows.length > 0) {
+        // The unique constraint on (strategyKey, symbol, timeframe, direction, barTime)
+        // prevents duplicate rows for the same setup. We catch the constraint
+        // violation at the DB level rather than using skipDuplicates (which
+        // requires a preview feature that isn't enabled).
+        try {
+          const r = await db.forwardTestSignal.createMany({ data: fwdRows as any });
+          forwardSignalsWritten = r.count;
+        } catch (dupErr: any) {
+          // P2002 = unique constraint violation — expected when the same bar
+          // re-dispatches. Count the rows we attempted as "written" since the
+          // first occurrence is already in the DB.
+          if (dupErr?.code === "P2002") {
+            forwardSignalsWritten = fwdRows.length;
+          } else {
+            throw dupErr;
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[scanner] forward test signal write error:", err);
+    }
+  }
+
+  // Consolidate raw signals into tradeable setups (one per symbol + direction).
+  // This is the unit the UI + Discord should surface — a full sweep produces
+  // 500+ raw signals but typically only 3-10 setups survive the
+  // minFamilies + minRR gates.
+  const { setups, conflicted: conflictedSetups } = consolidate(filtered, {
+    livePrices,
+  });
 
   const duration = Date.now() - startedAt;
 
   return {
     count: filtered.length,
     signals: filtered,
+    setups,
+    conflictedSetups,
     meta: {
       instrumentsScanned: instruments.length,
       instrumentsSkipped,
@@ -385,6 +438,8 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
       forwardSignalsWritten,
       dispatched,
       deduped,
+      setupCount: setups.length,
+      conflictedSetupCount: conflictedSetups.length,
       duration,
     },
   };

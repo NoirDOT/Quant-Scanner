@@ -93,6 +93,8 @@ export interface SummaryMeta {
   forwarded?: number;        // ForwardTestSignal rows written
   dispatched?: number;        // Discord alerts actually sent
   deduped?: number;           // Cross-sweep deduped (suppressed repeats)
+  setupCount?: number;        // Consolidated tradeable setups (pair + direction)
+  conflictedSetupCount?: number;
   failedSymbols?: string[];    // Symbols that came back with no data
   staleSymbols?: string[];    // Symbols where live price was unavailable
   durationMs?: number;
@@ -134,6 +136,13 @@ export function buildSummaryEmbed(signals: ScanSignal[], isLive: boolean, meta?:
   }
   if (meta?.forwarded != null) {
     lines.push(`**Forward-test rows:** ${meta.forwarded}`);
+  }
+  if (meta?.setupCount != null) {
+    const setupLine = `**Tradeable setups:** ${meta.setupCount}`;
+    const conflictLine = meta.conflictedSetupCount && meta.conflictedSetupCount > 0
+      ? ` (⚠️ ${meta.conflictedSetupCount} conflicted — ignored)`
+      : "";
+    lines.push(setupLine + conflictLine);
   }
   lines.push("", "**Signals by family:**", familyLines, "", "**Top signal:**", topLine);
   if (meta?.failedSymbols && meta.failedSymbols.length > 0) {

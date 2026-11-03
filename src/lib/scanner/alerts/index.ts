@@ -18,6 +18,9 @@ export interface DispatchResult {
   dispatched: number;
   deduped: number;
   failed: number;
+  /** The signals that were actually dispatched this sweep (after dedupe + cap).
+   *  Used by runScan to write ForwardTestSignal rows only for dispatched signals. */
+  dispatchedSignals: ScanSignal[];
 }
 
 /** Build the cross-sweep dedupe key. barTime comes from signal.metadata.barTime. */
@@ -86,71 +89,94 @@ export async function dispatchAlerts(
   let dispatched = 0;
   let deduped = 0;
   let failed = 0;
+  const dispatchedSignals: ScanSignal[] = [];
+
+  // ── Shared candidate selection (applies to ALL channels) ────────────────
+  //   a) score >= 50 only
+  //   b) per-sweep dedupe: keep the BEST signal per symbol+tf+direction
+  //      (the 10 trader models collapse into one alert per pair)
+  //   c) cap at the top 12 by score (respects Discord's 30 msg/min limit
+  //      and keeps Telegram/email manageable)
+  //   d) cross-sweep dedupe: skip signals already dispatched for this bar
+  //      (via the DispatchedSignal table)
+  const best = new Map<string, ScanSignal>();
+  for (const sig of signals) {
+    if (sig.score < 50) continue;
+    const key = `${sig.symbol}:${sig.timeframe}:${sig.direction}`;
+    const prev = best.get(key);
+    if (!prev || sig.score > prev.score) best.set(key, sig);
+  }
+  const candidates = Array.from(best.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 12);
+
+  // Cross-sweep dedupe: skip signals already dispatched for this bar
+  const keys = candidates.map(signalKey);
+  const alreadyDispatched = await loadDispatchedKeys(keys);
+
+  const toSend: ScanSignal[] = [];
+  for (const sig of candidates) {
+    const key = signalKey(sig);
+    // barTime = 0 means we don't know the bar time — fall back to always-send
+    // (legacy behavior) so signals aren't silently dropped if metadata is missing.
+    const hasBarTime = sig.metadata?.barTime != null && sig.metadata.barTime > 0;
+    if (hasBarTime && alreadyDispatched.has(key)) {
+      deduped++;
+      continue;
+    }
+    toSend.push(sig);
+  }
+
+  // Track newly-dispatched keys so the next sweep skips them (for ALL channels).
+  const newDispatched: Array<{ signalKey: string; signal: ScanSignal; channel: string }> = [];
 
   // ── 1. Discord (env-driven, no DB config required) ──
   if (process.env.DISCORD_WEBHOOK_URL) {
-    // Per-sweep dedupe: keep the BEST signal per symbol+tf+direction
-    const best = new Map<string, ScanSignal>();
-    for (const sig of signals) {
-      if (sig.score < 50) continue;
-      const key = `${sig.symbol}:${sig.timeframe}:${sig.direction}`;
-      const prev = best.get(key);
-      if (!prev || sig.score > prev.score) best.set(key, sig);
-    }
-    const candidates = Array.from(best.values())
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 12);
-
-    // Cross-sweep dedupe: skip signals already dispatched for this bar
-    const keys = candidates.map(signalKey);
-    const alreadyDispatched = await loadDispatchedKeys(keys);
-
-    const toSend: ScanSignal[] = [];
-    for (const sig of candidates) {
-      const key = signalKey(sig);
-      // barTime = 0 means we don't know the bar time — fall back to always-send
-      // (legacy behavior) so signals aren't silently dropped if metadata is missing.
-      const hasBarTime = sig.metadata?.barTime != null && sig.metadata.barTime > 0;
-      if (hasBarTime && alreadyDispatched.has(key)) {
-        deduped++;
-        continue;
-      }
-      toSend.push(sig);
-    }
-
-    const newDispatched: Array<{ signalKey: string; signal: ScanSignal; channel: string }> = [];
     for (const sig of toSend) {
       try {
         await sendDiscordAlert(sig);
         await new Promise((r) => setTimeout(r, 1200)); // stay under 30 msg/min
         dispatched++;
+        dispatchedSignals.push(sig);
         newDispatched.push({ signalKey: signalKey(sig), signal: sig, channel: "discord" });
       } catch (err) {
         console.error("[alerts] discord error:", err);
         failed++;
       }
     }
-    await recordDispatched(newDispatched);
-    await pruneOldDispatched();
   }
 
   // ── 2. DB-configured alerts (telegram, email) ──
+  // Now uses the SAME candidate list (deduped + capped) as Discord — no more
+  // "every signal ≥50 for every config on every sweep".
   try {
     const configs = await db.alertConfigScanner.findMany({ where: { enabled: true } });
-    for (const sig of signals) {
-      if (sig.score < 50) continue;
-      for (const cfg of configs) {
-        if (sig.score < cfg.minScore) continue;
-        try {
-          if (cfg.channel === "telegram") {
-            const { sendTelegram } = await import("./telegram");
-            await sendTelegram(cfg.destination, formatSignal(sig));
-          } else if (cfg.channel === "email") {
-            const { sendEmail, signalToEmailHtml } = await import("./email");
-            await sendEmail(cfg.destination, `[Scanner] ${sig.strategyLabel}`, signalToEmailHtml(sig));
+    if (configs.length > 0) {
+      for (const sig of toSend) {
+        // Track a signal as "dispatched" only once, even if it goes to multiple channels
+        let sentToAnyChannel = false;
+        for (const cfg of configs) {
+          if (sig.score < cfg.minScore) continue;
+          try {
+            if (cfg.channel === "telegram") {
+              const { sendTelegram } = await import("./telegram");
+              await sendTelegram(cfg.destination, formatSignal(sig));
+              sentToAnyChannel = true;
+              newDispatched.push({ signalKey: signalKey(sig), signal: sig, channel: "telegram" });
+            } else if (cfg.channel === "email") {
+              const { sendEmail, signalToEmailHtml } = await import("./email");
+              await sendEmail(cfg.destination, `[Scanner] ${sig.strategyLabel}`, signalToEmailHtml(sig));
+              sentToAnyChannel = true;
+              newDispatched.push({ signalKey: signalKey(sig), signal: sig, channel: "email" });
+            }
+          } catch (err) {
+            console.error(`[alerts] ${cfg.channel} failed:`, err);
+            failed++;
           }
-        } catch (err) {
-          console.error(`[alerts] ${cfg.channel} failed:`, err);
+        }
+        if (sentToAnyChannel) {
+          dispatched++;
+          dispatchedSignals.push(sig);
         }
       }
     }
@@ -158,12 +184,10 @@ export async function dispatchAlerts(
     // DB might not be set up — Discord still works without it
   }
 
-  // ── 3. Forward-test tracking ──
-  // ForwardTestSignal rows are written by runScan() (one per dispatched signal)
-  // so a nightly job can replay subsequent candles to compute R multiples.
-  // Nothing to do here — dispatchAlerts just signals whether to track.
+  await recordDispatched(newDispatched);
+  await pruneOldDispatched();
 
-  return { dispatched, deduped, failed };
+  return { dispatched, deduped, failed, dispatchedSignals };
 }
 
 function formatSignal(sig: ScanSignal): string {

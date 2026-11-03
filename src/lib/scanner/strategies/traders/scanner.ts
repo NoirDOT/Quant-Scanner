@@ -4,7 +4,7 @@
 
 import type { StrategyInfo, ScanSignal } from "../../types";
 import type { Timeframe } from "../../instruments";
-import { getCandles, type Candle } from "../../data";
+import { getCandlesLive, type Candle } from "../../data";
 import { TRADER_STRATEGIES, type TraderStrategyDef } from "./definitions";
 import {
   detectStructure,
@@ -20,6 +20,17 @@ import {
 } from "../../ict";
 import { activeKillzones } from "../../ict/killzones";
 import { ema } from "../../indicators/moving-averages";
+
+// Bar duration in seconds for each timeframe (for computing bar close time).
+function barDurationSec(tf: Timeframe): number {
+  switch (tf) {
+    case "1h": return 3600;
+    case "2h": return 7200;
+    case "4h": return 14400;
+    case "1d": return 86400;
+    case "1w": return 604800;
+  }
+}
 
 export const TRADER_SCAN_STRATEGIES: StrategyInfo[] = TRADER_STRATEGIES.map((t) => ({
   key: `trader-${t.key}`,
@@ -42,6 +53,8 @@ export interface TraderScanResult {
   stopPrice?: number;
   targetPrice?: number;
   ltfTimeframe: Timeframe;
+  barTime?: number;          // unix seconds — LTF bar open time (for dedupe + grading)
+  barCloseMs?: number;       // ms — LTF bar close time (for killzone scoring + freshness)
   metadata: {
     htfDirection: "bullish" | "bearish" | "neutral";
     htfBias: number;
@@ -77,15 +90,23 @@ export async function runTraderScan(
       ? "1h"
       : (ltfTf as Timeframe);
 
-  const [htfCandles, mtfCandles, ltfCandles] = await Promise.all([
-    getCandles(symbol, htfTf),
-    getCandles(symbol, mtfTf),
-    getCandles(symbol, effectiveLtf),
+  const [htfRes, mtfRes, ltfRes] = await Promise.all([
+    getCandlesLive(symbol, htfTf),
+    getCandlesLive(symbol, mtfTf),
+    getCandlesLive(symbol, effectiveLtf),
   ]);
+  const htfCandles = htfRes.candles;
+  const mtfCandles = mtfRes.candles;
+  const ltfCandles = ltfRes.candles;
 
   if (htfCandles.length < 30 || mtfCandles.length < 30 || ltfCandles.length < 30) {
     return null;
   }
+
+  // Bar close time = the LTF (most granular) closed bar's close time.
+  // Used by the grading layer for time-aware killzone scoring + cross-sweep dedupe.
+  const lastLtfBar = ltfCandles[ltfCandles.length - 1];
+  const ltfBarCloseMs = lastLtfBar ? (lastLtfBar.time + barDurationSec(effectiveLtf)) * 1000 : Date.now();
 
   // HTF bias
   const htf = htfBias(htfCandles, htfTf);
@@ -290,6 +311,8 @@ export async function runTraderScan(
     stopPrice,
     targetPrice,
     ltfTimeframe: effectiveLtf,
+    barTime: lastLtfBar?.time,
+    barCloseMs: ltfBarCloseMs,
     metadata: {
       htfDirection: htf.direction,
       htfBias: htf.bias,
@@ -322,6 +345,10 @@ export function traderResultToSignal(r: TraderScanResult): ScanSignal {
     entryPrice: r.entryPrice,
     stopPrice: r.stopPrice,
     targetPrice: r.targetPrice,
-    metadata: r.metadata,
+    metadata: {
+      ...r.metadata,
+      barTime: r.barTime,
+      barCloseMs: r.barCloseMs,
+    },
   };
 }

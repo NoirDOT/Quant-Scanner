@@ -120,7 +120,26 @@ export function catalogScore(signal: ScanSignal): number {
 // Freshness score (0-15) — decays over 24h
 // ---------------------------------------------------------------------------
 
-export function freshnessScore(generatedAt?: string): number {
+/**
+ * Freshness based on the signal's BAR CLOSE time (preferred — signals don't
+ * get stale just because the cron ran late). Falls back to generatedAt
+ * (the scan time), then to a middle score if neither is known.
+ *
+ * Pass barCloseMs for the bar close time in milliseconds.
+ */
+export function freshnessScore(generatedAt?: string, barCloseMs?: number): number {
+  // Prefer bar close time — that's when the signal actually became actionable.
+  if (barCloseMs != null && Number.isFinite(barCloseMs) && barCloseMs > 0) {
+    const ageHours = (Date.now() - barCloseMs) / (1000 * 60 * 60);
+    if (ageHours < 0) return 15;   // future timestamp = max (clock skew)
+    if (ageHours < 1) return 15;
+    if (ageHours < 3) return 13;
+    if (ageHours < 6) return 11;
+    if (ageHours < 12) return 8;
+    if (ageHours < 24) return 5;
+    return 2;
+  }
+  // Fall back to generatedAt (scan time) — less precise but better than nothing.
   if (!generatedAt) return 8;
   const ts = new Date(generatedAt).getTime();
   if (isNaN(ts)) return 8;
@@ -171,7 +190,8 @@ export function computeGradeFactors(signal: ScanSignal, barCloseMs?: number): Gr
   const ks = killzoneScoreForSignal(signal, barCloseMs);
   const rs = rrScore(signal);
   const cat = catalogScore(signal);
-  const fs = freshnessScore(signal.generatedAt);
+  const resolvedBarCloseMs = barCloseMs ?? signal.metadata?.barCloseMs;
+  const fs = freshnessScore(signal.generatedAt, resolvedBarCloseMs);
   const rawScore = signal.score;
 
   // Weighted blend: 60% raw signal score (mapped to 0-100), 40% grade factors

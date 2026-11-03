@@ -94,6 +94,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       count: result.count,
       signals: result.signals,
+      setups: result.setups,
+      conflictedSetups: result.conflictedSetups,
       meta: {
         ...result.meta,
         dispatchStripped: !privileged && (!!body.dispatch || !!body.persist),

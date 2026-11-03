@@ -156,16 +156,14 @@ function stripQuoteProps(quote: any): any {
 const FX_4H_OFFSET_HOURS = 21; // 21:00 UTC
 
 function aggregateTo4h(oneday: Candle[], offsetHours = FX_4H_OFFSET_HOURS): Candle[] {
+  // Contiguous 4h buckets aligned to `offsetHours` UTC.
+  // For 21:00 UTC alignment, the windows are [21-01], [01-05], [05-09], [09-13], [13-17], [17-21].
+  // A 00:00 UTC candle correctly lands in the PREVIOUS day's 21:00 bucket (the
+  // last hour of the 21:00-01:00 window), not the same-day 21:00 bucket.
+  const off = offsetHours * 3600;
   const buckets = new Map<number, Candle[]>();
   for (const c of oneday) {
-    // Shift the candle's UTC hour by -offset so the standard Math.floor(/4)*4
-    // bucketing picks the right 4h window, then shift back.
-    const shiftedHour = (c.date.getUTCHours() - offsetHours + 24) % 24;
-    const bucketShifted = Math.floor(shiftedHour / 4) * 4;
-    const bucketHourUTC = (bucketShifted + offsetHours) % 24;
-    const d = new Date(c.date);
-    d.setUTCHours(bucketHourUTC, 0, 0, 0);
-    const key = Math.floor(d.getTime() / 1000);
+    const key = Math.floor((c.time - off) / (4 * 3600)) * (4 * 3600) + off;
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key)!.push(c);
   }

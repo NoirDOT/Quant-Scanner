@@ -128,6 +128,11 @@ model ForwardTestSignal {
   barsToExit    Int?
   resolved      Boolean  @default(false)
 
+  // Unique on (strategy, symbol, tf, direction, barTime) — prevents the same
+  // setup being written 6× per day for a persistent daily signal. barTime is
+  // nullable for legacy signals but unique constraints treat NULLs as distinct
+  // in Postgres/SQLite, so only non-null barTime rows get enforced dedupe.
+  @@unique([strategyKey, symbol, timeframe, direction, barTime])
   @@index([strategyKey])
   @@index([symbol])
   @@index([signalAt])
