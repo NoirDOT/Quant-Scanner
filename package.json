@@ -8,8 +8,10 @@
     "build": "next build",
     "start": "next start -p 4000",
     "lint": "eslint .",
-    "db:push": "prisma db push --accept-data-loss",
-    "db:generate": "prisma generate",
+    "prebuild": "bun run scripts/swap-provider.ts",
+    "db:push": "bun run scripts/swap-provider.ts && prisma db push --accept-data-loss",
+    "db:generate": "bun run scripts/swap-provider.ts && prisma generate",
+    "db:migrate": "bun run scripts/swap-provider.ts && prisma migrate dev",
     "backtest": "bun run scripts/backtest-all.ts"
   },
   "dependencies": {

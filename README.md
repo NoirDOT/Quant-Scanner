@@ -82,7 +82,9 @@ Default alert threshold: **score ≥ 50**.
 
 - **117 instruments** — 21 forex pairs (majors + crosses), 7 commodities (gold, silver, oil, natgas, copper, platinum), 13 crypto, US indices (S&P 500, Nasdaq 100, Dow, Russell) and large-cap stocks. Full list in `src/lib/scanner/instruments.ts`.
 - **Timeframes:** `1h · 2h · 4h · 1d · 1w`
-- **Price data:** live Yahoo Finance candles (`yahoo-finance2`), CSV fallback in `data/csv/`
+- **Price data:** live Yahoo Finance candles (`yahoo-finance2`), with retry + backoff on 429s. CSV fallback in `data/csv/` for offline backtests.
+- **Closed-candle evaluation:** the last (forming) bar is dropped before strategies run, so live scans measure the same bars the backtest does. The live price is returned separately for display + freshness only.
+- **NY-aligned 4h bars:** 4h candles bucket to 21:00 UTC (NY 17:00 EST — the FX day rollover), not 00:00 UTC, matching how most retail brokers bucket FX.
 
 ---
 
@@ -120,16 +122,25 @@ Sends sample signal embeds + a summary to Discord so you can preview the design 
 
 ## Scheduled scans (GitHub Actions)
 
-**This is the 24/7 path.** `.github/workflows/scan.yml` hits the scanner every 6 hours (00:00 / 06:00 / 12:00 / 18:00 UTC) — no browser needed, no Vercel Cron required (Hobby plan allows only 1/day).
+**This is the 24/7 path.** `.github/workflows/scan.yml` hits the scanner 5 minutes after each 4h bar close — `00:05 / 04:05 / 08:05 / 12:05 / 16:05 / 20:05 UTC` — so 4h signals arrive promptly after the bar prints, not hours late. No browser needed, no Vercel Cron required (Hobby plan allows only 1/day).
+
+Each scheduled sweep:
+- Persists every signal to `ScanResult` (history is queryable)
+- Writes `ForwardTestSignal` rows (so a nightly replay can resolve outcomes)
+- Dispatches Discord alerts (cross-sweep deduped — a setup that already alerted for this bar won't re-fire)
+- Surfaces silent Yahoo failures in the summary embed ("⚠️ No data: EURJPY=X/4h")
 
 ### One-time setup (2 minutes)
 
-1. Generate a secret:
+1. Generate secrets:
    ```bash
-   openssl rand -hex 32
+   openssl rand -hex 32   # CRON_SECRET  (GitHub Actions → /api/scanner/ping)
+   openssl rand -hex 32   # API_SECRET    (admin / scripts)
+   openssl rand -hex 32   # BROWSER_SECRET (UI — exposed via NEXT_PUBLIC_BROWSER_SECRET)
+   openssl rand -hex 32   # WEBHOOK_SECRET (TradingView webhook URL path)
    ```
-2. **Vercel** → project → Settings → Environment Variables → add `CRON_SECRET` with that value → redeploy.
-3. **GitHub** → `NoirDOT/Quant-Scanner` → Settings → Secrets and variables → Actions → new repository secret `CRON_SECRET` (same value).
+2. **Vercel** → project → Settings → Environment Variables → add `CRON_SECRET`, `API_SECRET`, `BROWSER_SECRET` (as `NEXT_PUBLIC_BROWSER_SECRET`), `WEBHOOK_SECRET`, `DISCORD_WEBHOOK_URL`, `DATABASE_URL` (postgres) → redeploy.
+3. **GitHub** → `NoirDOT/Quant-Scanner` → Settings → Secrets and variables → Actions → new repository secret `CRON_SECRET` (same value as Vercel).
 4. *(Optional)* Add a repository **variable** `SCANNER_URL` if you deploy somewhere other than the default production URL.
 
 ### Run a scan right now
@@ -138,30 +149,36 @@ GitHub → **Actions** tab → **Scanner Sweep** → **Run workflow**. Alerts la
 
 ### Cost
 
-One sweep ≈ 30 s → 4 sweeps/day ≈ **60 min/month** of GitHub Actions' 2,000 free minutes for private repos.
+One sweep ≈ 30 s → 6 sweeps/day × 30 days = 180 sweeps/month ≈ **90 min/month** of GitHub Actions' 2,000 free minutes for private repos (unlimited for public repos).
 
 ---
 
 ## API
 
+All `/api/*` routes require a secret (any of `API_SECRET`, `CRON_SECRET`, `BROWSER_SECRET` as a `Bearer` token or `?key=` query). Public browser-readable GET routes (`/api/scanner/strategies`, `/instruments`, `/grades`, `/killzones`, `/signals`, `/candidates`, `/eas`, `/horc`, `/data`) are exempt. `POST /api/scanner` is allowed through middleware for the browser UI, but the route handler forces `dispatch=false` and `persist=false` for non-privileged callers — so anonymous attackers can't spam Discord or write DB rows.
+
 | Endpoint | What it does |
 |---|---|
-| `POST /api/scanner` | Run a scan. Body: `strategyType` (`trend\|ict\|trader\|ea\|horc\|all`), `strategies[]`, `traderKeys[]`, `eaKeys[]`, `instruments` (`"all"`, symbol array, or `assetClasses[]`), `timeframes[]`, `minScore` (default 50), `persist`, `dispatch`, `filterKeys[]`. Returns graded signals + meta. |
-| `GET /api/scanner/ping` | Full sweep + Discord dispatch. Protected by `Authorization: Bearer $CRON_SECRET`. `?test=1` for sample embeds. |
+| `POST /api/scanner` | Run a scan. Body (zod-validated): `strategyType` (`trend\|ict\|trader\|ea\|horc\|all`), `strategies[]`, `traderKeys[]`, `eaKeys[]`, `instruments` (`"all"`, symbol array, or `assetClasses[]`), `timeframes[]`, `minScore` (default 50), `persist`, `dispatch`, `filterKeys[]`. Returns graded signals + meta. **`dispatch`/`persist` require API_SECRET or BROWSER_SECRET.** |
+| `GET /api/scanner/ping` | Full sweep + Discord dispatch + persist + forward-test writes. Protected by `CRON_SECRET` (or `API_SECRET`) as `Bearer` token. `?test=1` for sample embeds. Calls `runScan()` directly — no HTTP self-fetch. |
+| `POST /api/webhook/incoming/:secret` | TradingView webhook. Secret is in the URL path (TV can't send headers). Validated by zod. Forwarded to Discord channel based on strategy name. |
 | `GET /api/scanner/signals` | Latest persisted signals |
 | `GET /api/scanner/strategies` | Unified catalog (all 46 with metadata + backtest stats) |
-| `GET /api/scanner/instruments` · `/grades` · `/killzones` | Reference data |
-| `POST /api/scanner/backtest` · `/backtest-all` | Run the backtest engine |
+| `GET /api/scanner/instruments` · `/grades` · `/killzones` | Reference data (public, browser-readable) |
+| `POST /api/scanner/backtest` · `/backtest-all` | Run the backtest engine (admin) |
 | `/api/scanner/candidates` · `/eas` · `/horc` · `/smt-psp-pro` · `/stress-tests` · `/export` · `/csv-data` · `/data` · `/debug` · `/alerts` | Supporting endpoints |
 
 ## Database (Prisma)
 
-SQLite in development, PostgreSQL in production (Vercel Postgres). Models:
+SQLite in development, PostgreSQL in production (Vercel Postgres). The provider is selected automatically by `scripts/swap-provider.ts` based on `DATABASE_URL` (if it starts with `postgres`, the schema is flipped to `postgresql` before `prisma generate` runs — no manual edits needed). Models:
 
-- `ScanResult` — every persisted signal (strategy, symbol, TF, direction, score, grade, entry/stop/target)
-- `BacktestByGrade` — backtest stats per strategy × symbol × timeframe, split by grade
+- `ScanResult` — every persisted signal (strategy, symbol, TF, direction, score, grade, entry/stop/target, **barTime**)
+- `BacktestByGrade` — backtest stats per strategy × symbol × timeframe, split by grade. **Read live by the grading layer** so `catalogScore` reflects real backtested edge.
+- `ForwardTestSignal` — every dispatched signal recorded for outcome replay (entry/stop/target/score/grade + outcome fields filled by a nightly job). **Now written by `runScan` when `trackForward=true`.**
+- `DispatchedSignal` — cross-sweep dedupe table. `signalKey = strategy:symbol:tf:direction:barTime` (unique). Pruned after 7 days.
+- `SymbolDataStatus` — per-symbol data freshness (candles count, last bar time, live price, source). Surfaces silent Yahoo failures in the Discord summary.
 - `AlertConfigScanner` / `AlertLogScanner` — alert channel config + delivery log
-- `StressTestResult` / `ForwardTestSignal` — stress-test and forward-test records
+- `StressTestResult` — stress-test records
 
 ---
 
@@ -169,28 +186,35 @@ SQLite in development, PostgreSQL in production (Vercel Postgres). Models:
 
 ```bash
 bun install
-bunx prisma generate
-bun run db:push        # creates the SQLite db
+bun run db:generate    # runs swap-provider + prisma generate
+bun run db:push         # creates the SQLite db (swap-provider + db push)
 bun run dev
 ```
 
-Open **http://localhost:4000** — the scanner page auto-scans on a timeframe-aware cadence (5m / 15m / 60m, controlled by the **AUTO** toggle) and pushes any signal ≥ 50 straight to Discord while the tab is open.
+Open **http://localhost:4000** — the scanner page auto-scans on a timeframe-aware cadence (5m / 15m / 60m, controlled by the **AUTO** toggle). When `NEXT_PUBLIC_BROWSER_SECRET` is set, signals ≥ 50 dispatch to Discord while the tab is open.
 
 Optional `.env`:
 
 ```env
-DATABASE_URL="file:./db/custom.db"
+DATABASE_URL="file:./db/scanner.db"
 DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
-CRON_SECRET="any-random-string"   # protects /api/scanner/ping
+
+# Auth (all optional in dev, required in prod)
+API_SECRET="..."                       # admin token
+CRON_SECRET="..."                      # GitHub Actions cron token
+BROWSER_SECRET="..."                   # UI token (set as NEXT_PUBLIC_BROWSER_SECRET too)
+WEBHOOK_SECRET="..."                   # TradingView webhook URL secret
+
+# Expose the browser secret to the client
+NEXT_PUBLIC_BROWSER_SECRET="..."
 ```
 
 ## Deploy on Vercel
 
 1. Import `NoirDOT/Quant-Scanner` on Vercel
 2. Create a Postgres database (Vercel → Storage) and link it
-3. In `prisma/schema.prisma`, change `provider = "sqlite"` → `provider = "postgresql"`
-4. Set env vars: `DATABASE_URL`, `DISCORD_WEBHOOK_URL`, `CRON_SECRET`
-5. Deploy — `vercel.json` already sets the build command (`prisma generate && next build`)
+3. Set env vars: `DATABASE_URL` (postgres), `DISCORD_WEBHOOK_URL`, `CRON_SECRET`, `API_SECRET`, `BROWSER_SECRET` (also as `NEXT_PUBLIC_BROWSER_SECRET`), `WEBHOOK_SECRET`
+4. Deploy — `vercel.json` runs `bun run scripts/swap-provider.ts && npx prisma generate && next build`, which flips the Prisma provider to `postgresql` automatically when `DATABASE_URL` starts with `postgres`
 
 ## Backtesting
 

@@ -2,8 +2,10 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// For local development: uses SQLite (no setup needed)
-// For Vercel deployment: change provider to "postgresql" and set DATABASE_URL to your Postgres URL
+// Local dev: SQLite (DATABASE_URL="file:./db/scanner.db")
+// Vercel prod: Postgres (DATABASE_URL="postgresql://...")
+// The build runs scripts/swap-provider.ts which flips provider to "postgresql"
+// when DATABASE_URL starts with "postgres", so deploys need no manual edit.
 datasource db {
   provider = "sqlite"
   url      = env("DATABASE_URL")
@@ -22,6 +24,7 @@ model ScanResult {
   entryPrice    Float?
   stopPrice     Float?
   targetPrice   Float?
+  barTime       Int?
   scannedAt     DateTime @default(now())
   createdAt     DateTime @default(now())
 
@@ -117,14 +120,54 @@ model ForwardTestSignal {
   grade         String?
   reasonsJson   String   @default("[]")
   signalAt      DateTime @default(now())
+  barTime       Int?
   outcome       String?
   exitPrice     Float?
   exitAt        DateTime?
   rMultiple     Float?
   barsToExit    Int?
+  resolved      Boolean  @default(false)
 
   @@index([strategyKey])
   @@index([symbol])
   @@index([signalAt])
+  @@index([resolved])
   @@map("scanner_forward_test_signals")
+}
+
+// Cross-sweep dedupe: only the FIRST alert for a given signalKey is dispatched.
+// signalKey = `${strategyKey}:${symbol}:${timeframe}:${direction}:${barTime}`
+// Pruned after 7 days by dispatchAlerts().
+model DispatchedSignal {
+  id           String   @id @default(cuid())
+  signalKey    String   @unique
+  strategyKey  String
+  symbol       String
+  timeframe    String
+  direction    String
+  score        Float
+  channel      String
+  dispatchedAt DateTime @default(now())
+
+  @@index([dispatchedAt])
+  @@index([symbol])
+  @@map("scanner_dispatched_signals")
+}
+
+// Per-symbol data freshness tracking — written every sweep, surfaced in the
+// Discord summary so silent Yahoo failures are visible.
+model SymbolDataStatus {
+  id            String   @id @default(cuid())
+  symbol        String
+  timeframe     String
+  candles       Int
+  lastBarTime   Int?
+  lastLivePrice Float?
+  source        String   @default("live")  // "live" | "stale" | "csv" | "failed"
+  error         String?
+  checkedAt     DateTime @default(now())
+
+  @@unique([symbol, timeframe])
+  @@index([checkedAt])
+  @@map("scanner_symbol_data_status")
 }

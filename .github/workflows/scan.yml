@@ -1,11 +1,12 @@
 # Quant Scanner — Scheduled Discord Signals
 # ----------------------------------------------------------
-# Runs the scanner every 6 hours and dispatches Discord
-# alerts for any signal scoring >= 50.
+# Runs the scanner aligned to 4h bar closes (00, 04, 08, 12, 16, 20 UTC)
+# and dispatches Discord alerts for any signal scoring >= 30 (cross-sweep
+# deduped — a 4h setup that already alerted won't re-fire).
 #
 # This REPLACES Vercel Cron (Hobby plan = 1/day max).
-# GitHub Actions free tier = 2,000 min/month.
-# One scan takes ~30s = ~360 min/month for 6h scans.
+# GitHub Actions free tier = 2,000 min/month for private repos (unlimited for public).
+# One scan takes ~30s = ~360 min/month for 6 sweeps/day.
 #
 # You can also trigger a scan manually:
 #   GitHub repo → Actions tab → "Scanner Sweep" → Run workflow
@@ -15,9 +16,9 @@ name: Scanner Sweep
 
 on:
   schedule:
-    # Every 6 hours at :00 (UTC)
-    # 00:00, 06:00, 12:00, 18:00 UTC
-    - cron: "0 */6 * * *"
+    # 5 minutes after each 4h bar close: 00:05, 04:05, 08:05, 12:05, 16:05, 20:05 UTC
+    # (5-min offset gives Yahoo time to publish the closed bar)
+    - cron: "5 0,4,8,12,16,20 * * *"
 
   # Manual trigger from the Actions tab
   workflow_dispatch:

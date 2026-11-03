@@ -1,21 +1,31 @@
-// GET /api/scanner/ping — runs a FULL scan + sends signals to Discord
-// Triggered by GitHub Actions (every 6h) or manually from the Actions tab.
-// This runs even when your browser is closed — you get Discord alerts 24/7.
+// GET /api/scanner/ping — runs a FULL scan + sends signals to Discord.
+// Triggered by GitHub Actions (every 4h aligned to bar closes) or manually.
+//
+// CRITICAL FIX: this used to POST to /api/scanner over HTTP (self-fetch),
+// which broke under Vercel SSO. Now it calls runScan() directly — same
+// process, no auth boundary, no SSO.
+//
+// Behavior:
+//   - Persists every signal to ScanResult (so historical scans are queryable)
+//   - Writes ForwardTestSignal rows (so a nightly replay can resolve outcomes)
+//   - Dispatches Discord alerts (cross-sweep deduped via DispatchedSignal)
+//   - Sends a summary embed
 //
 // Query params:
 //   ?test=1   Send sample signals + summary to Discord (preview the embed design)
 //
-// Security: if CRON_SECRET env var is set, callers must send it as a
-// Bearer token in the Authorization header.
+// Auth: requires CRON_SECRET (or API_SECRET) as a Bearer token.
+// If neither is set, returns 500 with a config warning.
 
 import { NextRequest, NextResponse } from "next/server";
 import type { ScanSignal } from "@/lib/scanner/types";
-import { sendDiscordAlerts, sendDiscordSummary, buildSignalEmbed } from "@/lib/scanner/alerts/discord";
+import { sendDiscordSummary, buildSignalEmbed } from "@/lib/scanner/alerts/discord";
+import { runScan } from "@/lib/scanner/runScan";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 150; // cron calls the scan (120s) + sends summary
+export const maxDuration = 150; // scan (120s) + dispatch + summary
 
-// ── Sample signals for test mode ────────────────────────────
+// ── Sample signals for test mode ────────────────────────────────────────────
 const SAMPLE_SIGNALS: ScanSignal[] = [
   {
     strategyKey: "trend-donchian-4h",
@@ -108,25 +118,32 @@ const SAMPLE_SIGNALS: ScanSignal[] = [
   },
 ];
 
+function checkAuth(req: NextRequest): boolean {
+  const secrets = [process.env.CRON_SECRET, process.env.API_SECRET].filter(
+    (s): s is string => typeof s === "string" && s.length > 0,
+  );
+  if (secrets.length === 0) return false; // require explicit secret in prod
+  const authHeader = req.headers.get("authorization") ?? "";
+  const token = authHeader.replace(/^Bearer\s+/i, "");
+  const queryKey = req.nextUrl.searchParams.get("key") ?? "";
+  const provided = token || queryKey;
+  return !!provided && secrets.includes(provided);
+}
+
 export async function GET(req: NextRequest) {
-  // ── Auth check ──────────────────────────────────────────────
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = req.headers.get("authorization") ?? "";
-    const token = authHeader.replace(/^Bearer\s+/i, "");
-    if (token !== cronSecret) {
-      return NextResponse.json(
-        { ok: false, error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+  // ── Auth check ──────────────────────────────────────────────────────────
+  if (!checkAuth(req)) {
+    return NextResponse.json(
+      { ok: false, error: "Unauthorized — set CRON_SECRET and send as Bearer token" },
+      { status: 401 }
+    );
   }
 
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
   const url = new URL(req.url);
   const isTest = url.searchParams.get("test") === "1";
 
-  // ── Test mode: send sample signals + summary to Discord ────
+  // ── Test mode: send sample signals + summary to Discord ──────────────────
   if (isTest) {
     if (!webhookUrl) {
       return NextResponse.json(
@@ -134,21 +151,13 @@ export async function GET(req: NextRequest) {
         { status: 500 }
       );
     }
-
-    // Send a single signal first
     const singleEmbed = buildSignalEmbed(SAMPLE_SIGNALS[0]);
     await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: "**▼ TEST — single signal preview ▼**",
-        embeds: [singleEmbed],
-      }),
+      body: JSON.stringify({ content: "**▼ TEST — single signal preview ▼**", embeds: [singleEmbed] }),
     }).catch(() => {});
-
-    await new Promise(r => setTimeout(r, 1000));
-
-    // Send the remaining 3 signals from different families
+    await new Promise((r) => setTimeout(r, 1000));
     for (const sig of SAMPLE_SIGNALS.slice(1)) {
       const embed = buildSignalEmbed(sig);
       await fetch(webhookUrl, {
@@ -156,82 +165,80 @@ export async function GET(req: NextRequest) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ embeds: [embed] }),
       }).catch(() => {});
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 500));
     }
-
-    await new Promise(r => setTimeout(r, 1000));
-
-    // Send the summary embed
+    await new Promise((r) => setTimeout(r, 1000));
     await sendDiscordSummary(SAMPLE_SIGNALS, true);
-
     return NextResponse.json({
       ok: true,
       test: true,
-      sent: SAMPLE_SIGNALS.length + 1, // 4 signals + 1 summary
+      sent: SAMPLE_SIGNALS.length + 1,
       message: "Test embeds sent to Discord — check your channel",
     });
   }
 
-  // ── Normal mode: run a full scan ───────────────────────────
-  // NOTE: do NOT use VERCEL_URL here — deployment URLs are protected by
-  // "Vercel Authentication" (SSO) and return 401 for self-fetches.
-  // The production domain is publicly accessible, so use it directly.
-  const baseUrl = process.env.SCANNER_PUBLIC_URL
-    ? process.env.SCANNER_PUBLIC_URL
-    : "https://quant-scanner-g7r7.vercel.app";
-
+  // ── Normal mode: run a full scan IN-PROCESS (no self-fetch) ──────────────
+  // Persists every signal, writes ForwardTestSignal rows, dispatches Discord
+  // alerts (cross-sweep deduped). The 24-instrument universe matches what
+  // the browser UI scans.
   try {
-    const scanRes = await fetch(`${baseUrl}/api/scanner`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        strategyType: "all",
-        instruments: [
-          // Forex majors (7)
-          "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", "USDCHF=X", "NZDUSD=X",
-          // Forex crosses (4)
-          "EURJPY=X", "GBPJPY=X", "EURGBP=X", "AUDJPY=X",
-          // Crypto (5)
-          "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD",
-          // Commodities (3)
-          "GC=F", "SI=F", "CL=F",
-          // Indices (5)
-          "^GSPC", "^NDX", "^DJI", "US500=F", "USTEC=F",
-        ],
-        timeframes: ["4h", "1d"],
-        minScore: 30,
-        dispatch: true,  // ← sends signals to Discord automatically
-      }),
+    const result = await runScan({
+      strategyType: "all",
+      instruments: [
+        // Forex majors (7)
+        "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", "USDCHF=X", "NZDUSD=X",
+        // Forex crosses (4)
+        "EURJPY=X", "GBPJPY=X", "EURGBP=X", "AUDJPY=X",
+        // Crypto (5)
+        "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD",
+        // Commodities (3)
+        "GC=F", "SI=F", "CL=F",
+        // Indices (5)
+        "^GSPC", "^NDX", "^DJI", "US500=F", "USTEC=F",
+      ],
+      timeframes: ["4h", "1d"],
+      minScore: 30,
+      persist: true,         // ← store every signal so history is queryable
+      dispatch: true,        // ← sends to Discord (cross-sweep deduped)
+      trackForward: true,    // ← writes ForwardTestSignal rows
     });
-    const scanText = await scanRes.text();
-    let scanData: any = {};
-    try {
-      scanData = JSON.parse(scanText);
-    } catch {
-      scanData = { parseError: true, bodyStart: scanText.slice(0, 200) };
-    }
-    const signalCount = scanData.count ?? 0;
-    const isLive = scanData.meta?.live ?? false;
 
-    if (scanData.parseError || !scanRes.ok) {
-      console.error(`[ping] scan fetch bad response: status=${scanRes.status} body=${scanText.slice(0, 300)}`);
-      return NextResponse.json({
-        ok: false,
-        alive: true,
-        scanStatus: scanRes.status,
-        scanBodyStart: scanText.slice(0, 300),
-      }, { status: 502 });
-    }
-    const signals: ScanSignal[] = scanData.signals ?? [];
+    const signals = result.signals;
+    const isLive = result.meta.live;
+
+    // Surface silent Yahoo failures in the summary — operators can see which
+    // symbols came back with no data or stale bars.
+    const failedSymbols = result.meta.symbolDataStatus.filter((s) => s.source === "failed" || s.candles < 30);
+    const staleSymbols = result.meta.symbolDataStatus.filter((s) => s.source === "stale");
 
     // Send a status summary to Discord
     if (webhookUrl) {
-      await sendDiscordSummary(signals, isLive);
+      await sendDiscordSummary(signals, isLive, {
+        instrumentsScanned: result.meta.instrumentsScanned,
+        instrumentsSkipped: result.meta.instrumentsSkipped,
+        forwarded: result.meta.forwardSignalsWritten,
+        dispatched: result.meta.dispatched,
+        deduped: result.meta.deduped,
+        failedSymbols: failedSymbols.map((s) => `${s.symbol}/${s.timeframe}`).slice(0, 8),
+        staleSymbols: staleSymbols.map((s) => s.symbol).slice(0, 8),
+        durationMs: result.meta.duration,
+      });
     }
 
-    return NextResponse.json({ ok: true, alive: true, live: isLive, signals: signalCount });
+    return NextResponse.json({
+      ok: true,
+      alive: true,
+      live: isLive,
+      signals: result.count,
+      dispatched: result.meta.dispatched,
+      deduped: result.meta.deduped,
+      forwarded: result.meta.forwardSignalsWritten,
+      failedSymbols: failedSymbols.length,
+      staleSymbols: staleSymbols.length,
+      durationMs: result.meta.duration,
+    });
   } catch (e) {
-    // Scanner down — send alert
+    // Scanner down — send alert to Discord
     if (webhookUrl) {
       const embed = {
         title: "⚠️  Scanner Down",
@@ -243,14 +250,15 @@ export async function GET(req: NextRequest) {
         timestamp: new Date().toISOString(),
         footer: { text: "Quant Scanner · scheduled sweep" },
       };
-
       await fetch(webhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ embeds: [embed] }),
       }).catch(() => {});
     }
-
-    return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : "unknown" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e instanceof Error ? e.message : "unknown" },
+      { status: 500 }
+    );
   }
 }

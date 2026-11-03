@@ -1,11 +1,17 @@
-// /home/z/my-project/src/lib/scanner/data.ts
 // Yahoo Finance data fetcher with in-memory caching and 4h aggregation.
 //
-// DATA STRATEGY (Vercel-proven):
-//   1. RAW fetch to query1.finance.yahoo.com with browser User-Agent
-//      (proven working on Vercel — 200 OK in ~120ms)
-//   2. yahoo-finance2 library fallback (v4 API: must instantiate `new YahooFinance()`)
+// DATA STRATEGY:
+//   1. RAW fetch to query1.finance.yahoo.com with browser User-Agent (primary)
+//   2. yahoo-finance2 library fallback (v4: must instantiate `new YahooFinance()`)
 //   3. CSV data (optional, if files are present)
+//
+// CRITICAL: getCandlesLive returns CLOSED candles only. The last (forming)
+// bar is dropped so live scans measure the same bars the backtest does.
+// The current live price is returned separately for display + freshness.
+//
+// 4h bars are aligned to 21:00 UTC (NY 17:00 EST — the FX day rollover),
+// not 00:00 UTC. This matches how most retail brokers bucket FX 4h candles
+// and is what ICT/SMC killzone mapping assumes.
 
 import YahooFinanceLib from "yahoo-finance2";
 import type { Timeframe } from "./instruments";
@@ -40,16 +46,39 @@ interface RawChartResponse {
   };
 }
 
+async function fetchWithBackoff(url: string, attempts = 3): Promise<Response> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url, {
+        headers: { "User-Agent": BROWSER_UA, Accept: "application/json" },
+        signal: AbortSignal.timeout(12_000),
+      });
+      // Yahoo sometimes returns 429 — back off and retry
+      if (res.status === 429 && i < attempts - 1) {
+        const delay = 800 * Math.pow(2, i) + Math.random() * 400;
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) {
+        const delay = 600 * Math.pow(2, i) + Math.random() * 300;
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr ?? new Error("fetch failed after retries");
+}
+
 async function rawYahooChart(
   symbol: string,
   interval: string,
   range: string
 ): Promise<{ candles: Candle[]; livePrice: number | null }> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": BROWSER_UA, Accept: "application/json" },
-    signal: AbortSignal.timeout(12_000),
-  });
+  const res = await fetchWithBackoff(url);
   if (!res.ok) throw new Error(`Yahoo raw HTTP ${res.status}`);
   const json = (await res.json()) as RawChartResponse;
   const r = json.chart?.result?.[0];
@@ -89,7 +118,7 @@ function rawParamsFor(tf: Timeframe): { interval: string; range: string } {
 }
 
 export interface Candle {
-  time: number;     // unix seconds
+  time: number;     // unix seconds (bar OPEN time)
   date: Date;
   open: number;
   high: number;
@@ -109,7 +138,6 @@ function ttlFor(tf: Timeframe): number {
 }
 
 function stripQuoteProps(quote: any): any {
-  // Yahoo returns many props; pick only what we need and clean up
   return {
     open: quote.open ?? null,
     high: quote.high ?? null,
@@ -120,13 +148,23 @@ function stripQuoteProps(quote: any): any {
   };
 }
 
-function aggregateTo4h(oneday: Candle[]): Candle[] {
-  // Aggregate 1h candles into 4h candles aligned to 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC
+// FX 4h candles conventionally align to the NY 17:00 EST rollover, which is
+// 21:00 UTC in winter (EST) and 20:00 UTC in summer (EDT). For simplicity
+// and to avoid DST drift we align to 21:00 UTC year-round; the small misalign
+// during EDT (~5 months/yr, 1h off) is acceptable for scanner purposes and is
+// what most charting platforms default to.
+const FX_4H_OFFSET_HOURS = 21; // 21:00 UTC
+
+function aggregateTo4h(oneday: Candle[], offsetHours = FX_4H_OFFSET_HOURS): Candle[] {
   const buckets = new Map<number, Candle[]>();
   for (const c of oneday) {
-    const bucketHour = Math.floor(c.date.getUTCHours() / 4) * 4;
+    // Shift the candle's UTC hour by -offset so the standard Math.floor(/4)*4
+    // bucketing picks the right 4h window, then shift back.
+    const shiftedHour = (c.date.getUTCHours() - offsetHours + 24) % 24;
+    const bucketShifted = Math.floor(shiftedHour / 4) * 4;
+    const bucketHourUTC = (bucketShifted + offsetHours) % 24;
     const d = new Date(c.date);
-    d.setUTCHours(bucketHour, 0, 0, 0);
+    d.setUTCHours(bucketHourUTC, 0, 0, 0);
     const key = Math.floor(d.getTime() / 1000);
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key)!.push(c);
@@ -139,15 +177,7 @@ function aggregateTo4h(oneday: Candle[]): Candle[] {
     const high = Math.max(...candles.map((c) => c.high));
     const low = Math.min(...candles.map((c) => c.low));
     const volume = candles.reduce((sum, c) => sum + c.volume, 0);
-    out.push({
-      time: key,
-      date: new Date(key * 1000),
-      open,
-      high,
-      low,
-      close,
-      volume,
-    });
+    out.push({ time: key, date: new Date(key * 1000), open, high, low, close, volume });
   }
   out.sort((a, b) => a.time - b.time);
   return out;
@@ -171,18 +201,34 @@ function aggregateTo2h(oneday: Candle[]): Candle[] {
     const high = Math.max(...candles.map((c) => c.high));
     const low = Math.min(...candles.map((c) => c.low));
     const volume = candles.reduce((sum, c) => sum + c.volume, 0);
-    out.push({
-      time: key,
-      date: new Date(key * 1000),
-      open,
-      high,
-      low,
-      close,
-      volume,
-    });
+    out.push({ time: key, date: new Date(key * 1000), open, high, low, close, volume });
   }
   out.sort((a, b) => a.time - b.time);
   return out;
+}
+
+// ─── Drop the last (incomplete/forming) bar so strategies evaluate only ────
+// CLOSED candles — matches what the backtest engine sees.
+function barDurationSec(tf: Timeframe): number {
+  switch (tf) {
+    case "1h": return 3600;
+    case "2h": return 7200;
+    case "4h": return 14400;
+    case "1d": return 86400;
+    case "1w": return 604800;
+  }
+}
+
+function dropFormingBar(candles: Candle[], tf: Timeframe): Candle[] {
+  if (candles.length === 0) return candles;
+  const last = candles[candles.length - 1];
+  const now = Math.floor(Date.now() / 1000);
+  // If the last bar's open time + duration is in the future, it's still forming.
+  const barEnd = last.time + barDurationSec(tf);
+  if (barEnd > now) {
+    return candles.slice(0, -1);
+  }
+  return candles;
 }
 
 export async function getCandles(
@@ -197,7 +243,6 @@ export async function getCandles(
   }
 
   // === PRIORITY 1: User-provided CSV data (if available) ===
-  // CSVs cover 2011–2026 with 15 years of history — far better than Yahoo's free tier
   const csvSymbol = csvSymbolFor(symbol);
   if (csvSymbol) {
     try {
@@ -231,18 +276,15 @@ export async function getCandles(
   // === PRIORITY 3: yahoo-finance2 library fallback (v4 API) ===
   const yfInterval = YF_INTERVAL[tf];
   const period =
-    tf === "1h"
-      ? "60d"
-      : tf === "2h" || tf === "4h"
-      ? "90d"
-      : tf === "1d"
-      ? "5y"
-      : "10y";
+    tf === "1h" ? "60d"
+    : tf === "2h" || tf === "4h" ? "90d"
+    : tf === "1d" ? "5y"
+    : "10y";
 
   try {
     const result = await yahooFinance.chart(symbol, {
       period1: new Date(Date.now() - parsePeriodToMs(period)),
-      interval: yfInterval as any, // "2h" isn't a native Yahoo interval — aggregated below
+      interval: yfInterval as any,
     });
     const quotes: any[] = (result as any).quotes ?? [];
     let candles: Candle[] = quotes
@@ -260,11 +302,8 @@ export async function getCandles(
           volume: Number(q.volume) || 0,
         } as Candle;
       });
-    if (tf === "2h") {
-      candles = aggregateTo2h(candles);
-    } else if (tf === "4h") {
-      candles = aggregateTo4h(candles);
-    }
+    if (tf === "2h") candles = aggregateTo2h(candles);
+    else if (tf === "4h") candles = aggregateTo4h(candles);
     candles = candles.slice(-lookback);
     cache.set(cacheKey, { ts: Date.now(), data: candles });
     return candles;
@@ -285,7 +324,6 @@ function parsePeriodToMs(period: string): number {
 }
 
 export async function getCurrentPrice(symbol: string): Promise<number | null> {
-  // Raw fetch first (1 request, proven reliable on Vercel)
   try {
     const { livePrice } = await rawYahooChart(symbol, "5m", "1d");
     if (livePrice != null && Number.isFinite(livePrice) && livePrice > 0) return livePrice;
@@ -315,10 +353,11 @@ export function clearCache(symbol?: string, tf?: Timeframe) {
 }
 
 // ─── LIVE DATA LAYER ─────────────────────────────────────────────────────
-// Overlays the CURRENT Yahoo Finance quote onto the last candle so every
-// scan evaluates the actual live market price, not a stale bar close.
+// Returns CLOSED candles (forming bar dropped) + the current live price
+// separately. Strategies evaluate the closed bar; livePrice is for display
+// and freshness scoring only. This is the same data the backtest sees.
 
-const liveCache = new Map<string, { ts: number; data: Candle[]; livePrice: number | null }>();
+const liveCache = new Map<string, { ts: number; candles: Candle[]; livePrice: number | null }>();
 
 function liveTtlFor(tf: Timeframe): number {
   if (tf === "1h" || tf === "2h" || tf === "4h") return 15 * 1000;  // 15s
@@ -326,15 +365,27 @@ function liveTtlFor(tf: Timeframe): number {
   return 60 * 1000;                                                  // 60s
 }
 
+export interface CandleDataResult {
+  candles: Candle[];            // CLOSED candles only (forming bar dropped)
+  livePrice: number | null;      // current Yahoo quote (display only)
+  source: "live" | "stale";      // "live" if we got a fresh quote this call
+  formingCandle?: Candle;        // the in-progress bar (if any) — display only
+}
+
 export async function getCandlesLive(
   symbol: string,
   tf: Timeframe,
   lookback: number = LOOKBACK_BARS[tf]
-): Promise<{ candles: Candle[]; livePrice: number | null; source: "live" | "stale" }> {
+): Promise<CandleDataResult> {
   const cacheKey = `${symbol}:${tf}:live`;
   const cached = liveCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < liveTtlFor(tf)) {
-    return { candles: cached.data, livePrice: cached.livePrice, source: "live" };
+    return {
+      candles: cached.candles,
+      livePrice: cached.livePrice,
+      source: cached.livePrice != null ? "live" : "stale",
+      formingCandle: undefined,
+    };
   }
 
   const [candles, livePrice] = await Promise.all([
@@ -343,23 +394,66 @@ export async function getCandlesLive(
   ]);
   if (candles.length === 0) return { candles: [], livePrice: null, source: "stale" };
 
-  let finalCandles = candles;
-  if (livePrice != null && Number.isFinite(livePrice) && livePrice > 0) {
-    finalCandles = candles.slice();
-    const last = { ...finalCandles[finalCandles.length - 1] };
-    last.close = livePrice;
-    last.high = Math.max(last.high, livePrice);
-    last.low = Math.min(last.low, livePrice);
-    finalCandles[finalCandles.length - 1] = last;
+  // Drop the forming bar so strategies evaluate only closed candles.
+  const closedCandles = dropFormingBar(candles, tf);
+  const formingRaw = closedCandles.length < candles.length ? candles[candles.length - 1] : undefined;
+
+  let formingCandle: Candle | undefined = formingRaw;
+  if (formingCandle && livePrice != null && Number.isFinite(livePrice) && livePrice > 0) {
+    // Overlay the live price onto the forming bar for display purposes only.
+    formingCandle = {
+      ...formingCandle,
+      close: livePrice,
+      high: Math.max(formingCandle.high, livePrice),
+      low: Math.min(formingCandle.low, livePrice),
+    };
   }
 
-  liveCache.set(cacheKey, { ts: Date.now(), data: finalCandles, livePrice });
+  liveCache.set(cacheKey, {
+    ts: Date.now(),
+    candles: closedCandles,
+    livePrice,
+  });
 
-  return { candles: finalCandles, livePrice, source: livePrice != null ? "live" : "stale" };
+  return {
+    candles: closedCandles,
+    livePrice,
+    source: livePrice != null ? "live" : "stale",
+    formingCandle,
+  };
 }
 
 export function clearLiveCache(symbol?: string, tf?: Timeframe) {
   if (!symbol) { liveCache.clear(); return; }
   if (tf) { liveCache.delete(`${symbol}:${tf}:live`); }
   else { for (const key of Array.from(liveCache.keys())) { if (key.startsWith(`${symbol}:`)) liveCache.delete(key); } }
+}
+
+// ─── Concurrency limiter (avoids hammering Yahoo with 24+ parallel reqs) ────
+// Simple promise-pool. No external deps.
+export async function pLimit<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+  onError?: (item: T, err: unknown) => void,
+): Promise<Array<R | undefined>> {
+  const queue = [...items];
+  const results: Array<R | undefined> = new Array(items.length).fill(undefined);
+  let nextIdx = 0;
+  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+    while (queue.length > 0) {
+      const item = queue.shift();
+      if (item === undefined) break;
+      const idx = nextIdx++;
+      try {
+        results[idx] = await fn(item);
+      } catch (err) {
+        if (onError) onError(item, err);
+        else console.error("[pLimit] worker error:", err);
+        results[idx] = undefined;
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }

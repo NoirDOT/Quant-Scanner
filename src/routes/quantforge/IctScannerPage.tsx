@@ -95,9 +95,15 @@ export function IctScannerPage() {
     setLoading(true);
     setError(null);
     try {
+      // BROWSER_SECRET is exposed to the client via NEXT_PUBLIC_BROWSER_SECRET.
+      // When set, the server allows dispatch (Discord alerts) + persist from
+      // this UI. When unset, scans still run but won't dispatch/persist.
+      const browserSecret = process.env.NEXT_PUBLIC_BROWSER_SECRET;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (browserSecret) headers["Authorization"] = `Bearer ${browserSecret}`;
       const res = await fetch("/api/scanner", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           strategyType: "all",
           timeframes: ["4h", "1d"],

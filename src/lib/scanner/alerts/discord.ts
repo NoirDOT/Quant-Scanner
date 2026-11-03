@@ -87,7 +87,18 @@ export function buildSignalEmbed(signal: ScanSignal) {
 }
 
 // ── Build a summary embed (sent after a scheduled sweep) ────
-export function buildSummaryEmbed(signals: ScanSignal[], isLive: boolean) {
+export interface SummaryMeta {
+  instrumentsScanned?: number;
+  instrumentsSkipped?: number;
+  forwarded?: number;        // ForwardTestSignal rows written
+  dispatched?: number;        // Discord alerts actually sent
+  deduped?: number;           // Cross-sweep deduped (suppressed repeats)
+  failedSymbols?: string[];    // Symbols that came back with no data
+  staleSymbols?: string[];    // Symbols where live price was unavailable
+  durationMs?: number;
+}
+
+export function buildSummaryEmbed(signals: ScanSignal[], isLive: boolean, meta?: SummaryMeta) {
   const count = signals.length;
 
   // Break down by family
@@ -111,18 +122,32 @@ export function buildSummaryEmbed(signals: ScanSignal[], isLive: boolean) {
     ? `${top.direction === "long" ? "🟢" : "🔴"} ${top.direction.toUpperCase()} ${top.display} · Score ${top.score} · Grade ${top.grade}`
     : "—";
 
-  const description = [
+  const lines: string[] = [
     `**Status:** ${isLive ? "🟢 LIVE" : "🟡 STALE"}`,
-    `**Scope:** 12 instruments · 4H + 1D timeframes`,
-    ``,
-    `**Signals by family:**`,
-    familyLines,
-    ``,
-    `**Top signal:**`,
-    topLine,
-    ``,
-    `Next scan in 6 hours`,
-  ].join("\n");
+    `**Scope:** ${meta?.instrumentsScanned ?? 24} instruments · 4H + 1D timeframes`,
+  ];
+  if (meta?.durationMs != null) {
+    lines.push(`**Duration:** ${(meta.durationMs / 1000).toFixed(1)}s`);
+  }
+  if (meta?.dispatched != null || meta?.deduped != null) {
+    lines.push(`**Dispatched:** ${meta?.dispatched ?? 0} alerts (${meta?.deduped ?? 0} deduped this sweep)`);
+  }
+  if (meta?.forwarded != null) {
+    lines.push(`**Forward-test rows:** ${meta.forwarded}`);
+  }
+  lines.push("", "**Signals by family:**", familyLines, "", "**Top signal:**", topLine);
+  if (meta?.failedSymbols && meta.failedSymbols.length > 0) {
+    lines.push("", `⚠️  **No data:** ${meta.failedSymbols.join(", ")}`);
+  }
+  if (meta?.staleSymbols && meta.staleSymbols.length > 0) {
+    lines.push(`🟡  **Stale price:** ${meta.staleSymbols.join(", ")}`);
+  }
+  if (meta?.instrumentsSkipped && meta.instrumentsSkipped > 0) {
+    lines.push(`⚠️  **Skipped:** ${meta.instrumentsSkipped} instruments errored`);
+  }
+  lines.push("", "Next scan in 4 hours");
+
+  const description = lines.join("\n");
 
   return {
     title: count > 0
@@ -168,9 +193,13 @@ export async function sendDiscordAlerts(signals: ScanSignal[]): Promise<number> 
   return sent;
 }
 
-export async function sendDiscordSummary(signals: ScanSignal[], isLive: boolean): Promise<boolean> {
+export async function sendDiscordSummary(
+  signals: ScanSignal[],
+  isLive: boolean,
+  meta?: SummaryMeta,
+): Promise<boolean> {
   if (!WEBHOOK_URL) return false;
-  const embed = buildSummaryEmbed(signals, isLive);
+  const embed = buildSummaryEmbed(signals, isLive, meta);
   try {
     const res = await fetch(WEBHOOK_URL, {
       method: "POST",
