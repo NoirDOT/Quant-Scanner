@@ -19,7 +19,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import type { ScanSignal } from "@/lib/scanner/types";
-import { sendDiscordSummary, buildSignalEmbed } from "@/lib/scanner/alerts/discord";
+import { sendDiscordSummary, sendDiscordSetupDigest, buildSignalEmbed } from "@/lib/scanner/alerts/discord";
 import { runScan } from "@/lib/scanner/runScan";
 
 export const dynamic = "force-dynamic";
@@ -211,15 +211,16 @@ export async function GET(req: NextRequest) {
     const failedSymbols = result.meta.symbolDataStatus.filter((s) => s.source === "failed" || s.candles < 30);
     const staleSymbols = result.meta.symbolDataStatus.filter((s) => s.source === "stale");
 
-    // Send a status summary to Discord
+    // Send a SETUP DIGEST summary to Discord (replaces the old signal-count summary).
+    // This lists the top 10 tradeable setups in a compact table so you can see
+    // the actionable setups at a glance, not just a signal count.
     if (webhookUrl) {
-      await sendDiscordSummary(signals, isLive, {
+      await sendDiscordSetupDigest(result.setups, isLive, {
         instrumentsScanned: result.meta.instrumentsScanned,
         instrumentsSkipped: result.meta.instrumentsSkipped,
         forwarded: result.meta.forwardSignalsWritten,
         dispatched: result.meta.dispatched,
         deduped: result.meta.deduped,
-        setupCount: result.meta.setupCount,
         conflictedSetupCount: result.meta.conflictedSetupCount,
         failedSymbols: failedSymbols.map((s) => `${s.symbol}/${s.timeframe}`).slice(0, 8),
         staleSymbols: staleSymbols.map((s) => s.symbol).slice(0, 8),

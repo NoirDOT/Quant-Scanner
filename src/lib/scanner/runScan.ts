@@ -322,6 +322,14 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
   const filtered = allSignals.filter((s) => s.score >= minScoreVal);
   filtered.sort((a, b) => b.score - a.score);
 
+  // Consolidate raw signals into tradeable setups (one per symbol + direction).
+  // This MUST happen before dispatch so Discord sends setup embeds (with
+  // regime, risk sizing, TV deep link) instead of individual signal embeds.
+  const { setups, conflicted: conflictedSetups } = consolidate(filtered, {
+    livePrices,
+    regimes,
+  });
+
   // Persist ScanResult rows (best-effort) — one row per filtered signal.
   // This is the historical record (queryable via /api/scanner/signals).
   if (shouldPersist) {
@@ -357,6 +365,8 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
   }
 
   // Dispatch alerts (cross-sweep deduped via DispatchedSignal table).
+  // Pass the consolidated SETUPS so Discord sends setup embeds (with regime,
+  // risk sizing, TV deep link) instead of individual signal embeds.
   // dispatchAlerts returns the list of signals it ACTUALLY dispatched
   // (after dedupe + cap), which we use below for forward-test tracking.
   let dispatched = 0;
@@ -364,7 +374,10 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
   let dispatchedSignals: ScanSignal[] = [];
   if (shouldDispatch) {
     try {
-      const result = await dispatchAlerts(filtered, { trackForward: shouldTrackForward });
+      const result = await dispatchAlerts(filtered, {
+        trackForward: shouldTrackForward,
+        setups: setups.length > 0 ? setups : undefined,
+      });
       dispatched = result.dispatched;
       deduped = result.deduped;
       dispatchedSignals = result.dispatchedSignals;
@@ -422,15 +435,6 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
       console.error("[scanner] forward test signal write error:", err);
     }
   }
-
-  // Consolidate raw signals into tradeable setups (one per symbol + direction).
-  // This is the unit the UI + Discord should surface — a full sweep produces
-  // 500+ raw signals but typically only 3-10 setups survive the
-  // minFamilies + minRR + regime gates.
-  const { setups, conflicted: conflictedSetups } = consolidate(filtered, {
-    livePrices,
-    regimes,
-  });
 
   const duration = Date.now() - startedAt;
 

@@ -158,6 +158,168 @@ export function buildSignalEmbed(signal: ScanSignal) {
   };
 }
 
+// ── Build a SETUP embed (consolidated — one per pair + direction) ────────────
+// This is what Discord should send instead of individual signal embeds.
+// Includes: regime, families agreeing, R:R, risk sizing, TV deep link.
+
+import type { Setup } from "../consolidate";
+import { computePositionSize, DEFAULT_RISK_CONFIG, type RiskConfig } from "../risk";
+
+export function buildSetupEmbed(setup: Setup, riskConfig?: RiskConfig) {
+  const isLong = setup.direction === "long";
+  const arrow = isLong ? "🟢" : "🔴";
+  const dirText = isLong ? "LONG" : "SHORT";
+  const color = isLong ? 0x22c55e : 0xef4444;
+  const { best } = setup;
+
+  // Family agreement badges
+  const familyBadges = setup.families
+    .map((f) => {
+      const emoji = FAMILY_EMOJIS[f] ?? "📊";
+      const name = f.charAt(0).toUpperCase() + f.slice(1);
+      return `${emoji} ${name}`;
+    })
+    .join("  ·  ");
+
+  // Regime badge
+  const regimeEmoji =
+    setup.regime === "bull" ? "📈" :
+    setup.regime === "bear" ? "📉" :
+    setup.regime === "sideways" ? "➡️" : "❓";
+  const regimeText = setup.regime
+    ? `${regimeEmoji} ${setup.regime.toUpperCase()}${setup.regimeLabel ? ` · ${setup.regimeLabel}` : ""}`
+    : "—";
+
+  // Risk sizing
+  const cfg = riskConfig ?? {
+    accountBalance: parseFloat(process.env.ACCOUNT_BALANCE ?? "10000"),
+    riskPerTrade: parseFloat(process.env.RISK_PER_TRADE ?? "0.01"),
+  };
+  const posSize = computePositionSize(best, cfg);
+
+  const fields = [
+    { name: "Families Agreeing", value: familyBadges, inline: false },
+    { name: "Regime", value: regimeText, inline: true },
+    { name: "Setup Score", value: `**${Math.round(setup.score)}**/100`, inline: true },
+    { name: "Grade", value: `**${best.grade ?? "—"}**`, inline: true },
+    { name: "Entry", value: `\`${fmtPrice(best.entryPrice, setup.assetClass)}\``, inline: true },
+    { name: "Stop", value: `\`${fmtPrice(best.stopPrice, setup.assetClass)}\``, inline: true },
+    { name: "Target", value: `\`${fmtPrice(best.targetPrice, setup.assetClass)}\``, inline: true },
+    { name: "Risk : Reward", value: `1:${setup.rr.toFixed(1)}`, inline: true },
+  ];
+
+  // Risk sizing
+  if (posSize) {
+    fields.push({
+      name: "Position Size",
+      value: `${posSize.label}  (risk $${posSize.riskAmount.toFixed(0)} · ${posSize.stopPips.toFixed(0)} pip stop)`,
+      inline: false,
+    });
+  }
+
+  // Timeframes + strategy count
+  fields.push({
+    name: "Confluence",
+    value: `${setup.strategyCount} signal${setup.strategyCount === 1 ? "" : "s"} across ${setup.timeframes.join(" + ").toUpperCase()}`,
+    inline: false,
+  });
+
+  // TradingView deep link
+  const tvUrl = tradingViewUrl(best);
+  fields.push({
+    name: "Chart",
+    value: `[📊 Open in TradingView](${tvUrl})`,
+    inline: false,
+  });
+
+  // Best signal's reasons (top 3)
+  const reasonsText = best.reasons?.slice(0, 3).map(r => `▸ ${r}`).join("\n") ?? "";
+
+  return {
+    title: `${arrow}  ${dirText}  ${setup.display}  ·  ${setup.timeframes.join("/").toUpperCase()}`,
+    description: reasonsText || `**${familyBadges}**`,
+    fields,
+    color,
+    timestamp: best.generatedAt ?? new Date().toISOString(),
+    footer: { text: `Quant Scanner · setup · best: ${best.strategyLabel}` },
+  };
+}
+
+// ── Build a setup DIGEST embed (top N setups in one embed) ──────────────────
+// Sent as the summary after a sweep — replaces the old signal-count summary
+// with an actionable list of the top setups.
+export function buildSetupDigestEmbed(
+  setups: Setup[],
+  isLive: boolean,
+  meta?: SummaryMeta,
+) {
+  const count = setups.length;
+
+  // Build a compact table of the top 10 setups
+  const lines: string[] = [];
+  lines.push(`**Status:** ${isLive ? "🟢 LIVE" : "🟡 STALE"}`);
+  if (meta?.instrumentsScanned != null) {
+    lines.push(`**Scope:** ${meta.instrumentsScanned} instruments · 4H + 1D`);
+  }
+  if (meta?.durationMs != null) {
+    lines.push(`**Duration:** ${(meta.durationMs / 1000).toFixed(1)}s`);
+  }
+  if (meta?.dispatched != null || meta?.deduped != null) {
+    lines.push(`**Dispatched:** ${meta?.dispatched ?? 0} setup alerts (${meta?.deduped ?? 0} deduped)`);
+  }
+  if (meta?.forwarded != null) {
+    lines.push(`**Forward-test rows:** ${meta.forwarded}`);
+  }
+
+  lines.push("", `**Tradeable setups (${count}):**`);
+
+  if (count === 0) {
+    lines.push("```No setups met the criteria (≥2 families, R:R ≥ 1.5, regime-aligned)```");
+  } else {
+    // Compact table: arrow pair dir score rr families
+    lines.push("```");
+    lines.push("  DIR  PAIR           SCORE  R:R   FAMILIES");
+    lines.push("  ───  ─────────────  ─────  ───  ──────────────");
+    for (const s of setups.slice(0, 10)) {
+      const arrow = s.direction === "long" ? "🟢" : "🔴";
+      const dir = s.direction === "long" ? "LONG " : "SHORT";
+      const pair = s.display.padEnd(14).slice(0, 14);
+      const score = String(Math.round(s.score)).padStart(3).slice(0, 3);
+      const rr = `1:${s.rr.toFixed(1)}`.padStart(5).slice(0, 5);
+      const fams = s.families.map((f) => f.charAt(0).toUpperCase() + f.slice(1, 3)).join(",").slice(0, 14);
+      lines.push(`  ${arrow}  ${dir} ${pair}  ${score}  ${rr}  ${fams}`);
+    }
+    lines.push("```");
+  }
+
+  // Conflicted count
+  if (meta?.conflictedSetupCount && meta.conflictedSetupCount > 0) {
+    lines.push(`⚠️  **${meta.conflictedSetupCount} conflicted setup${meta.conflictedSetupCount === 1 ? "" : "s"}** (both directions firing — ignored)`);
+  }
+
+  // Failed/stale symbols
+  if (meta?.failedSymbols && meta.failedSymbols.length > 0) {
+    lines.push("", `⚠️  **No data:** ${meta.failedSymbols.join(", ")}`);
+  }
+  if (meta?.staleSymbols && meta.staleSymbols.length > 0) {
+    lines.push(`🟡  **Stale price:** ${meta.staleSymbols.join(", ")}`);
+  }
+
+  lines.push("", "Next scan in 4 hours");
+
+  const description = lines.join("\n");
+
+  return {
+    title: count > 0
+      ? `📡  ${count} Tradeable Setup${count === 1 ? "" : "s"}`
+      : "📡  Scanner Sweep Complete",
+    description,
+    color: count > 0 ? 0x22c55e : 0xf59e0b,
+    timestamp: new Date().toISOString(),
+    footer: { text: "Quant Scanner · scheduled sweep" },
+  };
+}
+
 // ── Build a summary embed (sent after a scheduled sweep) ────
 export interface SummaryMeta {
   instrumentsScanned?: number;
@@ -281,6 +443,44 @@ export async function sendDiscordSummary(
 ): Promise<boolean> {
   if (!WEBHOOK_URL) return false;
   const embed = buildSummaryEmbed(signals, isLive, meta);
+  try {
+    const res = await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ embeds: [embed] }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ── Setup send functions (consolidated — one embed per setup) ────────────────
+
+export async function sendDiscordSetupAlert(setup: Setup, riskConfig?: RiskConfig): Promise<boolean> {
+  if (!WEBHOOK_URL) return false;
+  const embed = buildSetupEmbed(setup, riskConfig);
+  try {
+    const res = await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ embeds: [embed] }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function sendDiscordSetupDigest(
+  setups: Setup[],
+  isLive: boolean,
+  meta?: SummaryMeta,
+): Promise<boolean> {
+  if (!WEBHOOK_URL) return false;
+  const embed = buildSetupDigestEmbed(setups, isLive, meta);
   try {
     const res = await fetch(WEBHOOK_URL, {
       method: "POST",

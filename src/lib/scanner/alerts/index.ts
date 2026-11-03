@@ -1,14 +1,20 @@
 // Alert dispatcher — sends signals to configured channels.
 // Supports: Discord (webhook), Telegram (bot), Email (SMTP).
 //
-// CROSS-SWEEP DEDUPE: a signalKey = `${strategyKey}:${symbol}:${tf}:${direction}:${barTime}`
-// is recorded in the DispatchedSignal table when first alerted. Subsequent
-// sweeps with the same key are silently skipped — so a 4h bar that takes 12
-// hours to invalidate won't re-alert every 6 hours. Entries >7d old are pruned.
+// SETUP MODE (default when setups[] provided):
+//   Sends one consolidated SETUP embed per pair+direction (not 12 individual
+//   signal embeds). Each embed includes regime, families agreeing, R:R, risk
+//   sizing, and a TradingView deep link. Cross-sweep dedupe keys on
+//   `symbol:direction:barTime` so a persistent setup doesn't re-alert.
+//
+// FALLBACK MODE (no setups[]):
+//   Legacy behavior — sends individual signal embeds, deduped per
+//   symbol+tf+direction, capped at top 12.
 
 import type { ScanSignal } from "../types";
+import type { Setup } from "../consolidate";
 import { db } from "@/lib/db";
-import { sendDiscordAlert } from "./discord";
+import { sendDiscordAlert, sendDiscordSetupAlert } from "./discord";
 
 // Re-export init functions for the alerts API route
 export { initTelegram } from "./telegram";
@@ -23,17 +29,29 @@ export interface DispatchResult {
   dispatchedSignals: ScanSignal[];
 }
 
-/** Build the cross-sweep dedupe key. barTime comes from signal.metadata.barTime. */
+export interface DispatchOptions {
+  trackForward?: boolean;
+  /** Consolidated setups — when provided, setup embeds are sent instead of
+   *  individual signal embeds. */
+  setups?: Setup[];
+}
+
+/** Build the cross-sweep dedupe key for a SIGNAL. */
 export function signalKey(sig: ScanSignal): string {
   const barTime = sig.metadata?.barTime ?? 0;
   return `${sig.strategyKey}:${sig.symbol}:${sig.timeframe}:${sig.direction}:${barTime}`;
+}
+
+/** Build the cross-sweep dedupe key for a SETUP (symbol+direction+barTime of best signal). */
+export function setupKey(setup: Setup): string {
+  const barTime = setup.best.metadata?.barTime ?? 0;
+  return `setup:${setup.symbol}:${setup.direction}:${barTime}`;
 }
 
 /** Read already-dispatched keys from the DB so we can skip them. */
 async function loadDispatchedKeys(keys: string[]): Promise<Set<string>> {
   if (keys.length === 0) return new Set();
   try {
-    // Prisma doesn't support `IN` with thousands of items safely; chunk it.
     const chunks: string[][] = [];
     for (let i = 0; i < keys.length; i += 500) chunks.push(keys.slice(i, i + 500));
     const found = await Promise.all(
@@ -83,22 +101,102 @@ async function pruneOldDispatched(): Promise<void> {
 
 export async function dispatchAlerts(
   signals: ScanSignal[],
-  opts: { trackForward?: boolean } = {}
+  opts: DispatchOptions = {},
 ): Promise<DispatchResult> {
   const trackForward = opts.trackForward ?? false;
+  const setups = opts.setups;
   let dispatched = 0;
   let deduped = 0;
   let failed = 0;
   const dispatchedSignals: ScanSignal[] = [];
 
-  // ── Shared candidate selection (applies to ALL channels) ────────────────
-  //   a) score >= 50 only
-  //   b) per-sweep dedupe: keep the BEST signal per symbol+tf+direction
-  //      (the 10 trader models collapse into one alert per pair)
-  //   c) cap at the top 12 by score (respects Discord's 30 msg/min limit
-  //      and keeps Telegram/email manageable)
-  //   d) cross-sweep dedupe: skip signals already dispatched for this bar
-  //      (via the DispatchedSignal table)
+  // ════════════════════════════════════════════════════════════════════════
+  // SETUP MODE — send consolidated setup embeds (preferred)
+  // ════════════════════════════════════════════════════════════════════════
+  if (setups && setups.length > 0) {
+    // Cap at top 10 setups by score (respects Discord's 30 msg/min limit)
+    const candidates = [...setups].sort((a, b) => b.score - a.score).slice(0, 10);
+
+    // Cross-sweep dedupe on setup key
+    const keys = candidates.map(setupKey);
+    const alreadyDispatched = await loadDispatchedKeys(keys);
+
+    const toSend: Setup[] = [];
+    for (const setup of candidates) {
+      const key = setupKey(setup);
+      const hasBarTime = setup.best.metadata?.barTime != null && setup.best.metadata.barTime > 0;
+      if (hasBarTime && alreadyDispatched.has(key)) {
+        deduped++;
+        continue;
+      }
+      toSend.push(setup);
+    }
+
+    const newDispatched: Array<{ signalKey: string; signal: ScanSignal; channel: string }> = [];
+
+    // ── Discord: send setup embeds ──
+    if (process.env.DISCORD_WEBHOOK_URL) {
+      for (const setup of toSend) {
+        try {
+          await sendDiscordSetupAlert(setup);
+          await new Promise((r) => setTimeout(r, 1500)); // stay under 30 msg/min
+          dispatched++;
+          dispatchedSignals.push(setup.best);
+          newDispatched.push({ signalKey: setupKey(setup), signal: setup.best, channel: "discord" });
+        } catch (err) {
+          console.error("[alerts] discord setup error:", err);
+          failed++;
+        }
+      }
+    }
+
+    // ── Telegram/Email: send the best signal from each setup ──
+    try {
+      const configs = await db.alertConfigScanner.findMany({ where: { enabled: true } });
+      if (configs.length > 0) {
+        for (const setup of toSend) {
+          const sig = setup.best;
+          let sentToAnyChannel = false;
+          for (const cfg of configs) {
+            if (sig.score < cfg.minScore) continue;
+            try {
+              if (cfg.channel === "telegram") {
+                const { sendTelegram } = await import("./telegram");
+                await sendTelegram(cfg.destination, formatSetup(setup));
+                sentToAnyChannel = true;
+                newDispatched.push({ signalKey: setupKey(setup), signal: sig, channel: "telegram" });
+              } else if (cfg.channel === "email") {
+                const { sendEmail } = await import("./email");
+                await sendEmail(cfg.destination, `[Scanner] ${setup.direction.toUpperCase()} ${setup.display}`, formatSetup(setup));
+                sentToAnyChannel = true;
+                newDispatched.push({ signalKey: setupKey(setup), signal: sig, channel: "email" });
+              }
+            } catch (err) {
+              console.error(`[alerts] ${cfg.channel} setup failed:`, err);
+              failed++;
+            }
+          }
+          if (sentToAnyChannel) {
+            dispatched++;
+            if (!dispatchedSignals.includes(sig)) dispatchedSignals.push(sig);
+          }
+        }
+      }
+    } catch (e) {
+      // DB might not be set up — Discord still works without it
+    }
+
+    await recordDispatched(newDispatched);
+    await pruneOldDispatched();
+
+    return { dispatched, deduped, failed, dispatchedSignals };
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FALLBACK MODE — send individual signal embeds (legacy, when no setups)
+  // ════════════════════════════════════════════════════════════════════════
+
+  // Per-sweep dedupe: keep the BEST signal per symbol+tf+direction
   const best = new Map<string, ScanSignal>();
   for (const sig of signals) {
     if (sig.score < 50) continue;
@@ -110,15 +208,12 @@ export async function dispatchAlerts(
     .sort((a, b) => b.score - a.score)
     .slice(0, 12);
 
-  // Cross-sweep dedupe: skip signals already dispatched for this bar
   const keys = candidates.map(signalKey);
   const alreadyDispatched = await loadDispatchedKeys(keys);
 
   const toSend: ScanSignal[] = [];
   for (const sig of candidates) {
     const key = signalKey(sig);
-    // barTime = 0 means we don't know the bar time — fall back to always-send
-    // (legacy behavior) so signals aren't silently dropped if metadata is missing.
     const hasBarTime = sig.metadata?.barTime != null && sig.metadata.barTime > 0;
     if (hasBarTime && alreadyDispatched.has(key)) {
       deduped++;
@@ -127,15 +222,14 @@ export async function dispatchAlerts(
     toSend.push(sig);
   }
 
-  // Track newly-dispatched keys so the next sweep skips them (for ALL channels).
   const newDispatched: Array<{ signalKey: string; signal: ScanSignal; channel: string }> = [];
 
-  // ── 1. Discord (env-driven, no DB config required) ──
+  // ── 1. Discord ──
   if (process.env.DISCORD_WEBHOOK_URL) {
     for (const sig of toSend) {
       try {
         await sendDiscordAlert(sig);
-        await new Promise((r) => setTimeout(r, 1200)); // stay under 30 msg/min
+        await new Promise((r) => setTimeout(r, 1200));
         dispatched++;
         dispatchedSignals.push(sig);
         newDispatched.push({ signalKey: signalKey(sig), signal: sig, channel: "discord" });
@@ -146,14 +240,11 @@ export async function dispatchAlerts(
     }
   }
 
-  // ── 2. DB-configured alerts (telegram, email) ──
-  // Now uses the SAME candidate list (deduped + capped) as Discord — no more
-  // "every signal ≥50 for every config on every sweep".
+  // ── 2. Telegram/Email ──
   try {
     const configs = await db.alertConfigScanner.findMany({ where: { enabled: true } });
     if (configs.length > 0) {
       for (const sig of toSend) {
-        // Track a signal as "dispatched" only once, even if it goes to multiple channels
         let sentToAnyChannel = false;
         for (const cfg of configs) {
           if (sig.score < cfg.minScore) continue;
@@ -176,7 +267,7 @@ export async function dispatchAlerts(
         }
         if (sentToAnyChannel) {
           dispatched++;
-          dispatchedSignals.push(sig);
+          if (!dispatchedSignals.includes(sig)) dispatchedSignals.push(sig);
         }
       }
     }
@@ -193,4 +284,19 @@ export async function dispatchAlerts(
 function formatSignal(sig: ScanSignal): string {
   const arrow = sig.direction === "long" ? "🟢" : "🔴";
   return `${arrow} *${sig.strategyLabel}*\n${sig.symbol} · ${sig.timeframe.toUpperCase()} · ${sig.direction.toUpperCase()} · Score: ${sig.score}`;
+}
+
+function formatSetup(setup: Setup): string {
+  const arrow = setup.direction === "long" ? "🟢" : "🔴";
+  const families = setup.families.join(", ");
+  const rr = `1:${setup.rr.toFixed(1)}`;
+  return [
+    `${arrow} *${setup.direction.toUpperCase()} ${setup.display}*`,
+    `Score: ${Math.round(setup.score)} · R:R ${rr}`,
+    `Families: ${families} (${setup.strategyCount} signals)`,
+    setup.regime ? `Regime: ${setup.regime}` : "",
+    setup.best.entryPrice ? `Entry: ${setup.best.entryPrice}` : "",
+    setup.best.stopPrice ? `Stop: ${setup.best.stopPrice}` : "",
+    setup.best.targetPrice ? `Target: ${setup.best.targetPrice}` : "",
+  ].filter(Boolean).join("\n");
 }
