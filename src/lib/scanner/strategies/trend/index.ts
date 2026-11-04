@@ -1,5 +1,6 @@
 // src/lib/scanner/strategies/trend/index.ts
 // Trend continuation strategies — 6 indicator families × 5 timeframes
+// All indicators are cached per symbol+TF via the indicatorCache (set by runScan).
 
 import type { StrategyContext, ScanSignal, ScannerFn, StrategyInfo } from "../../types";
 import {
@@ -14,6 +15,7 @@ import {
   haTrendContinuation,
   donchianFromCloses,
 } from "../../indicators";
+import { getIndicatorCache } from "../../indicatorCache";
 
 export const TREND_STRATEGIES: StrategyInfo[] = [
   { key: "trend-ema", type: "trend", label: "EMA Stack (8/21/50/200)", description: "Bullish/bearish stacked EMAs with price above/below all", timeframes: ["1h", "2h", "4h", "1d", "1w"] },
@@ -29,7 +31,8 @@ export const emaStackScanner: ScannerFn = (ctx) => {
   const { candles, symbol, display, assetClass, timeframe } = ctx;
   if (candles.length < 200) return Promise.resolve(null);
   const closes = candles.map((c) => c.close);
-  const states = stackedEma(closes);
+  const cache = getIndicatorCache();
+  const states = cache ? cache.getStackedEma(symbol, timeframe, candles) : stackedEma(closes);
   const last = states[states.length - 1];
   if (!last) return Promise.resolve(null);
   const lastClose = closes[closes.length - 1];
@@ -94,8 +97,9 @@ export const supertrendPsarScanner: ScannerFn = (ctx) => {
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
   const closes = candles.map((c) => c.close);
-  const st = supertrend(highs, lows, closes, 10, 3);
-  const ps = psar(highs, lows, closes);
+  const cache = getIndicatorCache();
+  const st = cache ? cache.getSupertrend(symbol, timeframe, candles, 10, 3) : supertrend(highs, lows, closes, 10, 3);
+  const ps = cache ? cache.getPsar(symbol, timeframe, candles) : psar(highs, lows, closes);
   const lastSt = st[st.length - 1];
   const lastPs = ps[ps.length - 1];
   if (!lastSt || !lastPs) return Promise.resolve(null);
@@ -168,8 +172,9 @@ export const macdAdxScanner: ScannerFn = (ctx) => {
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
   const closes = candles.map((c) => c.close);
-  const macdStates = macd(closes);
-  const adxStates = adx(highs, lows, closes);
+  const cache = getIndicatorCache();
+  const macdStates = cache ? cache.getMacd(symbol, timeframe, candles) : macd(closes);
+  const adxStates = cache ? cache.getAdx(symbol, timeframe, candles) : adx(highs, lows, closes);
   const lastMacd = macdStates[macdStates.length - 1];
   const lastAdx = adxStates[adxStates.length - 1];
   if (!lastMacd || !lastAdx) return Promise.resolve(null);
@@ -218,7 +223,7 @@ export const macdAdxScanner: ScannerFn = (ctx) => {
   score = Math.min(100, score);
   if (score < 50) return Promise.resolve(null);
   const lastClose = closes[closes.length - 1];
-  const rsiVals = rsi(closes, 14);
+  const rsiVals = cache ? cache.getRsi(symbol, timeframe, candles) : rsi(closes, 14);
   const rsiVal = rsiVals[rsiVals.length - 1] ?? 50;
   const entry = lastClose;
   // Stop beyond recent swing using 14-bar ATR proxy via true range
@@ -256,7 +261,8 @@ export const ichimokuScanner: ScannerFn = (ctx) => {
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
   const closes = candles.map((c) => c.close);
-  const states = ichimoku(highs, lows, closes);
+  const cache = getIndicatorCache();
+  const states = cache ? cache.getIchimoku(symbol, timeframe, candles) : ichimoku(highs, lows, closes);
   const last = states[states.length - 1];
   if (!last) return Promise.resolve(null);
   const reasons: string[] = [];
@@ -325,7 +331,8 @@ export const heikinAshiScanner: ScannerFn = (ctx) => {
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
   const closes = candles.map((c) => c.close);
-  const ha = heikinAshi(opens, highs, lows, closes);
+  const cache = getIndicatorCache();
+  const ha = cache ? cache.getHeikinAshi(symbol, timeframe, candles) : heikinAshi(opens, highs, lows, closes);
   const trend = haTrendContinuation(ha, 3);
   const last = ha[ha.length - 1];
   const reasons: string[] = [];
@@ -387,7 +394,8 @@ export const donchianBreakoutScanner: ScannerFn = (ctx) => {
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
   const closes = candles.map((c) => c.close);
-  const states = donchianFromCloses(highs, lows, closes, 20);
+  const cache = getIndicatorCache();
+  const states = cache ? cache.getDonchian(symbol, timeframe, candles, 20) : donchianFromCloses(highs, lows, closes, 20);
   const last = states[states.length - 1];
   if (!last) return Promise.resolve(null);
   const reasons: string[] = [];

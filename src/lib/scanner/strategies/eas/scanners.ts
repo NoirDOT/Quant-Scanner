@@ -13,6 +13,7 @@ import {
   donchianFromCloses,
 } from "../../indicators";
 import { detectFVGs, detectLiquiditySweeps, premiumDiscount, detectStructure } from "../../ict";
+import { getIndicatorCache } from "../../indicatorCache";
 
 export const EA_SCANNERS_INFO: StrategyInfo[] = [
   {
@@ -255,6 +256,7 @@ function dailyPivots(candles: import("../../data").Candle[]): { pp: number; r1: 
 // === FVG Retracement (EA) ===
 export const fvgRetracementScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | null => {
   const { candles, symbol, display, assetClass, timeframe } = ctx;
+  const cache = getIndicatorCache();
   if (candles.length < 50) return null;
   const fvgs = detectFVGs(candles);
   if (fvgs.length === 0) return null;
@@ -262,7 +264,7 @@ export const fvgRetracementScanner: ScannerFn = (ctx: StrategyContext): ScanSign
   const closes = candles.map((c) => c.close);
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
-  const atrArr = atr(highs, lows, closes, 14);
+  const atrArr = cache ? cache.getAtr(symbol, timeframe, candles, 14) : atr(highs, lows, closes, 14);
   const lastATR = atrArr[atrArr.length - 1];
   if (lastATR === null) return null;
   const minGap = lastATR * 0.3;
@@ -308,13 +310,14 @@ export const fvgRetracementScanner: ScannerFn = (ctx: StrategyContext): ScanSign
 // === ADX-Filtered BB (EA) ===
 export const adxbbScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | null => {
   const { candles, symbol, display, assetClass, timeframe } = ctx;
+  const cache = getIndicatorCache();
   if (candles.length < 50) return null;
   const closes = candles.map((c) => c.close);
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
   const bb = bollingerBands(closes, 20, 2);
-  const adxArr = adx(highs, lows, closes, 14);
-  const atrArr = atr(highs, lows, closes, 14);
+  const adxArr = cache ? cache.getAdx(symbol, timeframe, candles, 14) : adx(highs, lows, closes, 14);
+  const atrArr = cache ? cache.getAtr(symbol, timeframe, candles, 14) : atr(highs, lows, closes, 14);
   const lastATR = atrArr[atrArr.length - 1];
   const lastAdx = adxArr[adxArr.length - 1];
   const lastLower = bb.lower[bb.lower.length - 1];
@@ -366,13 +369,14 @@ export const adxbbScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | null
 // === Donchian Scalper (EA) ===
 export const donchianScalperScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | null => {
   const { candles, symbol, display, assetClass, timeframe } = ctx;
+  const cache = getIndicatorCache();
   if (candles.length < 50) return null;
   const closes = candles.map((c) => c.close);
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
-  const dch = donchianFromCloses(highs, lows, closes, 20);
-  const adxArr = adx(highs, lows, closes, 14);
-  const atrArr = atr(highs, lows, closes, 14);
+  const dch = cache ? cache.getDonchian(symbol, timeframe, candles, 20) : donchianFromCloses(highs, lows, closes, 20);
+  const adxArr = cache ? cache.getAdx(symbol, timeframe, candles, 14) : adx(highs, lows, closes, 14);
+  const atrArr = cache ? cache.getAtr(symbol, timeframe, candles, 14) : atr(highs, lows, closes, 14);
   const lastDch = dch[dch.length - 1];
   const lastAdx = adxArr[adxArr.length - 1];
   const lastATR = atrArr[atrArr.length - 1];
@@ -416,11 +420,12 @@ export const donchianScalperScanner: ScannerFn = (ctx: StrategyContext): ScanSig
 // === Ichimoku Triple Confirm (EA) ===
 export const ichimokuTripleScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | null => {
   const { candles, symbol, display, assetClass, timeframe } = ctx;
+  const cache = getIndicatorCache();
   if (candles.length < 100) return null;
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
   const closes = candles.map((c) => c.close);
-  const states = ichimoku(highs, lows, closes);
+  const states = cache ? cache.getIchimoku(symbol, timeframe, candles) : ichimoku(highs, lows, closes);
   const last = states[states.length - 1];
   if (!last) return null;
   let direction: "long" | "short" | "neutral" = "neutral";
@@ -465,13 +470,14 @@ export const ichimokuTripleScanner: ScannerFn = (ctx: StrategyContext): ScanSign
 // === BTC Momentum + ADX (EA) — long-only ===
 export const btcMomAdxScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | null => {
   const { candles, symbol, display, assetClass, timeframe } = ctx;
+  const cache = getIndicatorCache();
   if (candles.length < 60) return null;
   const closes = candles.map((c) => c.close);
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
   const rocArr = roc(closes, 20);
-  const adxArr = adx(highs, lows, closes, 14);
-  const atrArr = atr(highs, lows, closes, 14);
+  const adxArr = cache ? cache.getAdx(symbol, timeframe, candles, 14) : adx(highs, lows, closes, 14);
+  const atrArr = cache ? cache.getAtr(symbol, timeframe, candles, 14) : atr(highs, lows, closes, 14);
   const lastROC = rocArr[rocArr.length - 1];
   const lastAdx = adxArr[adxArr.length - 1];
   const lastATR = atrArr[atrArr.length - 1];
@@ -507,10 +513,11 @@ export const btcMomAdxScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | 
 // === MA Envelope Reversal (EA) ===
 export const maEnvelopeScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | null => {
   const { candles, symbol, display, assetClass, timeframe } = ctx;
+  const cache = getIndicatorCache();
   if (candles.length < 50) return null;
   const closes = candles.map((c) => c.close);
-  const ema20 = ema(closes, 20);
-  const atrArr = atr(candles.map((c) => c.high), candles.map((c) => c.low), closes, 14);
+  const ema20 = cache ? cache.getEma(symbol, timeframe, candles, 20) : ema(closes, 20);
+  const atrArr = cache ? cache.getAtr(symbol, timeframe, candles, 14) : atr(candles.map((c) => c.high), candles.map((c) => c.low), closes, 14);
   const lastEMA = ema20[ema20.length - 1];
   const lastATR = atrArr[atrArr.length - 1];
   if (lastEMA === null || lastATR === null) return null;
@@ -556,6 +563,7 @@ export const maEnvelopeScanner: ScannerFn = (ctx: StrategyContext): ScanSignal |
 // === NR7 Contraction → Expansion (EA) ===
 export const nr7BreakoutScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | null => {
   const { candles, symbol, display, assetClass, timeframe } = ctx;
+  const cache = getIndicatorCache();
   if (candles.length < 30) return null;
   const ranges = candles.map((c) => c.high - c.low);
   const lastIdx = candles.length - 1;
@@ -603,13 +611,14 @@ export const nr7BreakoutScanner: ScannerFn = (ctx: StrategyContext): ScanSignal 
 // === Williams %R + CCI (EA) ===
 export const williamsCciScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | null => {
   const { candles, symbol, display, assetClass, timeframe } = ctx;
+  const cache = getIndicatorCache();
   if (candles.length < 50) return null;
   const closes = candles.map((c) => c.close);
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
   const wr = williamsR(highs, lows, closes, 14);
   const cciArr = cci(highs, lows, closes, 20);
-  const atrArr = atr(highs, lows, closes, 14);
+  const atrArr = cache ? cache.getAtr(symbol, timeframe, candles, 14) : atr(highs, lows, closes, 14);
   const lastWR = wr[wr.length - 1];
   const lastCCI = cciArr[cciArr.length - 1];
   const lastATR = atrArr[atrArr.length - 1];
@@ -653,13 +662,14 @@ export const williamsCciScanner: ScannerFn = (ctx: StrategyContext): ScanSignal 
 // === INVERTED Daily Pivot (EA) ===
 export const pivotInvertedScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | null => {
   const { candles, symbol, display, assetClass, timeframe } = ctx;
+  const cache = getIndicatorCache();
   if (candles.length < 50) return null;
   const pivots = dailyPivots(candles);
   if (!pivots) return null;
   const closes = candles.map((c) => c.close);
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
-  const atrArr = atr(highs, lows, closes, 20);
+  const atrArr = cache ? cache.getAtr(symbol, timeframe, candles, 20) : atr(highs, lows, closes, 20);
   const lastATR = atrArr[atrArr.length - 1];
   if (lastATR === null) return null;
   const lastClose = closes[closes.length - 1];
@@ -700,10 +710,11 @@ export const pivotInvertedScanner: ScannerFn = (ctx: StrategyContext): ScanSigna
 // === RSI Crossover (EA) ===
 export const rsiCrossScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | null => {
   const { candles, symbol, display, assetClass, timeframe } = ctx;
+  const cache = getIndicatorCache();
   if (candles.length < 30) return null;
   const closes = candles.map((c) => c.close);
-  const atrArr = atr(candles.map((c) => c.high), candles.map((c) => c.low), closes, 14);
-  const rsiArr = rsi(closes, 14);
+  const atrArr = cache ? cache.getAtr(symbol, timeframe, candles, 14) : atr(candles.map((c) => c.high), candles.map((c) => c.low), closes, 14);
+  const rsiArr = cache ? cache.getRsi(symbol, timeframe, candles, 14) : rsi(closes, 14);
   const lastATR = atrArr[atrArr.length - 1];
   const lastRSI = rsiArr[rsiArr.length - 1];
   const prevRSI = rsiArr[rsiArr.length - 2];
@@ -745,11 +756,12 @@ export const rsiCrossScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | n
 // === BB + RSI Combo (EA) ===
 export const bbRsiComboScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | null => {
   const { candles, symbol, display, assetClass, timeframe } = ctx;
+  const cache = getIndicatorCache();
   if (candles.length < 50) return null;
   const closes = candles.map((c) => c.close);
   const bb = bollingerBands(closes, 20, 2);
-  const rsiArr = rsi(closes, 14);
-  const atrArr = atr(candles.map((c) => c.high), candles.map((c) => c.low), closes, 14);
+  const rsiArr = cache ? cache.getRsi(symbol, timeframe, candles, 14) : rsi(closes, 14);
+  const atrArr = cache ? cache.getAtr(symbol, timeframe, candles, 14) : atr(candles.map((c) => c.high), candles.map((c) => c.low), closes, 14);
   const lastLower = bb.lower[bb.lower.length - 1];
   const lastUpper = bb.upper[bb.upper.length - 1];
   const lastMiddle = bb.middle[bb.middle.length - 1];
@@ -795,9 +807,10 @@ export const bbRsiComboScanner: ScannerFn = (ctx: StrategyContext): ScanSignal |
 // === EMA(200) Cloud Limit-Touch (EA) ===
 export const emaCloudTouchScanner: ScannerFn = (ctx: StrategyContext): ScanSignal | null => {
   const { candles, symbol, display, assetClass, timeframe } = ctx;
+  const cache = getIndicatorCache();
   if (candles.length < 250) return null;
   const closes = candles.map((c) => c.close);
-  const ema200 = ema(closes, 200);
+  const ema200 = cache ? cache.getEma(symbol, timeframe, candles, 200) : ema(closes, 200);
   const lastEMA = ema200[ema200.length - 1];
   if (lastEMA === null) return null;
   const lastIdx = candles.length - 1;
@@ -817,7 +830,7 @@ export const emaCloudTouchScanner: ScannerFn = (ctx: StrategyContext): ScanSigna
     reasons.push("EA backtest (60d BTCUSD M15): Sharpe 0.74, PF 1.63, Win 60.0%, +$5,939");
   }
   if (direction === "neutral") return null;
-  const atrArr = atr(candles.map((c) => c.high), candles.map((c) => c.low), closes, 14);
+  const atrArr = cache ? cache.getAtr(symbol, timeframe, candles, 14) : atr(candles.map((c) => c.high), candles.map((c) => c.low), closes, 14);
   const lastATR = atrArr[atrArr.length - 1];
   if (lastATR === null) return null;
   const entry = last.close;
