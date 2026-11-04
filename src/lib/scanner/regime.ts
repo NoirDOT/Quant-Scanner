@@ -12,6 +12,7 @@ import type { Candle } from "./data";
 import { ema } from "./indicators/moving-averages";
 import { adx as adxCalc } from "./indicators/adx";
 import { supertrend as supertrendCalc } from "./indicators/supertrend";
+import { getIndicatorCache } from "./indicatorCache";
 
 export type Regime = "bull" | "bear" | "sideways";
 
@@ -35,7 +36,7 @@ export interface RegimeAssessment {
  *   - Bear: EMA stack bearish + ADX > 20 + Supertrend down
  *   - Sideways: ADX < 20, or EMAs tangled (no clean stack)
  */
-export function classifyRegime(candles: Candle[]): RegimeAssessment {
+export function classifyRegime(candles: Candle[], symbol?: string, tf?: string): RegimeAssessment {
   if (candles.length < 200) {
     return { regime: "sideways", strength: 0, label: "Insufficient data" };
   }
@@ -44,10 +45,14 @@ export function classifyRegime(candles: Candle[]): RegimeAssessment {
   const lows = candles.map((c) => c.low);
   const last = closes.length - 1;
 
-  const ema8 = ema(closes, 8);
-  const ema21 = ema(closes, 21);
-  const ema50 = ema(closes, 50);
-  const ema200 = ema(closes, 200);
+  // Use the shared indicator cache when available (set by runScan per-sweep).
+  // Falls back to direct computation when no cache is present (standalone use).
+  const cache = symbol && tf ? getIndicatorCache() : null;
+
+  const ema8 = cache ? cache.getEma(symbol!, tf!, candles, 8) : ema(closes, 8);
+  const ema21 = cache ? cache.getEma(symbol!, tf!, candles, 21) : ema(closes, 21);
+  const ema50 = cache ? cache.getEma(symbol!, tf!, candles, 50) : ema(closes, 50);
+  const ema200 = cache ? cache.getEma(symbol!, tf!, candles, 200) : ema(closes, 200);
 
   const e8 = ema8[last];
   const e21 = ema21[last];
@@ -63,11 +68,11 @@ export function classifyRegime(candles: Candle[]): RegimeAssessment {
   const bearStack = e8 < e21 && e21 < e50 && e50 < e200;
 
   // ADX (trend strength) — returns ADXState[] with .adx property
-  const adxStates = adxCalc(highs, lows, closes, 14);
+  const adxStates = cache ? cache.getAdx(symbol!, tf!, candles, 14) : adxCalc(highs, lows, closes, 14);
   const adxLast = adxStates[adxStates.length - 1]?.adx ?? 0;
 
   // Supertrend — returns SupertrendState[] with .direction (1 | -1)
-  const stStates = supertrendCalc(highs, lows, closes, 10, 3);
+  const stStates = cache ? cache.getSupertrend(symbol!, tf!, candles, 10, 3) : supertrendCalc(highs, lows, closes, 10, 3);
   const stLast = stStates[stStates.length - 1];
   const stUp = stLast?.direction === 1;
   const stDown = stLast?.direction === -1;

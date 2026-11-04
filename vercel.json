@@ -1,4 +1,4 @@
 {
-  "buildCommand": "bun run scripts/swap-provider.ts && npx prisma generate && next build",
+  "buildCommand": "bun run scripts/swap-provider.ts && npx prisma generate && npx prisma db push --accept-data-loss && next build",
   "framework": "nextjs"
 }

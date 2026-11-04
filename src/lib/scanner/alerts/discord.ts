@@ -297,6 +297,15 @@ export function buildSetupDigestEmbed(
     lines.push(`⚠️  **${meta.conflictedSetupCount} conflicted setup${meta.conflictedSetupCount === 1 ? "" : "s"}** (both directions firing — ignored)`);
   }
 
+  // News blackout — active events suppress affected setups
+  if (meta?.newsActiveLabel) {
+    lines.push("", `🔴 **NEWS BLACKOUT:** ${meta.newsActiveLabel}`);
+    lines.push("Affected currency setups have been suppressed.");
+  }
+  if (meta?.newsUpcomingLabel) {
+    lines.push(`📅 **Upcoming:** ${meta.newsUpcomingLabel}`);
+  }
+
   // Failed/stale symbols
   if (meta?.failedSymbols && meta.failedSymbols.length > 0) {
     lines.push("", `⚠️  **No data:** ${meta.failedSymbols.join(", ")}`);
@@ -329,6 +338,8 @@ export interface SummaryMeta {
   deduped?: number;           // Cross-sweep deduped (suppressed repeats)
   setupCount?: number;        // Consolidated tradeable setups (pair + direction)
   conflictedSetupCount?: number;
+  newsActiveLabel?: string | null;    // Active news blackout events
+  newsUpcomingLabel?: string | null;  // Events in the next 24h
   failedSymbols?: string[];    // Symbols that came back with no data
   staleSymbols?: string[];    // Symbols where live price was unavailable
   durationMs?: number;

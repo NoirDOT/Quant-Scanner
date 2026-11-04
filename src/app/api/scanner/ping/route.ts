@@ -222,6 +222,8 @@ export async function GET(req: NextRequest) {
         dispatched: result.meta.dispatched,
         deduped: result.meta.deduped,
         conflictedSetupCount: result.meta.conflictedSetupCount,
+        newsActiveLabel: result.meta.newsActiveLabel,
+        newsUpcomingLabel: result.meta.newsUpcomingLabel,
         failedSymbols: failedSymbols.map((s) => `${s.symbol}/${s.timeframe}`).slice(0, 8),
         staleSymbols: staleSymbols.map((s) => s.symbol).slice(0, 8),
         durationMs: result.meta.duration,

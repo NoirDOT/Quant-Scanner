@@ -32,6 +32,8 @@ import { db } from "@/lib/db";
 import { loadCatalogStatsMap, attachCatalogStats, recordSymbolDataStatus } from "./catalogStats";
 import { consolidate, type Setup } from "./consolidate";
 import { classifyRegime, type RegimeAssessment } from "./regime";
+import { getNewsBlackout, formatActiveEvents, formatUpcomingEvents } from "./news";
+import { createIndicatorCache, setIndicatorCache, clearIndicatorCache } from "./indicatorCache";
 
 export interface RunScanOptions {
   strategyType?: string;             // "trend" | "ict" | "trader" | "ea" | "horc" | "all"
@@ -67,6 +69,9 @@ export interface RunScanMeta {
   deduped: number;
   setupCount: number;
   conflictedSetupCount: number;
+  newsBlackoutActive: boolean;
+  newsActiveLabel: string | null;
+  newsUpcomingLabel: string | null;
   duration: number;
 }
 
@@ -116,6 +121,13 @@ function resolveInstruments(opts: RunScanOptions): Instrument[] {
 
 export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult> {
   const startedAt = Date.now();
+
+  // Create a per-scan indicator cache and stash it on globalThis so all
+  // strategies can share computed indicators (EMA, ATR, ADX, Supertrend, etc.)
+  // without recomputing them for every strategy on the same candles.
+  const indicatorCache = createIndicatorCache();
+  setIndicatorCache(indicatorCache);
+
   const tfList: Timeframe[] = (opts.timeframes && opts.timeframes.length > 0
     ? opts.timeframes
     : ["1h", "4h", "1d"]) as Timeframe[];
@@ -174,7 +186,7 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
       // regime classification). We only need to do this once per symbol.
       if (!regimes[inst.symbol] && tf === "1d" && candles.length >= 200) {
         try {
-          regimes[inst.symbol] = classifyRegime(candles);
+          regimes[inst.symbol] = classifyRegime(candles, inst.symbol, tf);
         } catch (err) {
           console.error(`[runScan] regime classify failed for ${inst.symbol}:`, err);
         }
@@ -322,12 +334,18 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
   const filtered = allSignals.filter((s) => s.score >= minScoreVal);
   filtered.sort((a, b) => b.score - a.score);
 
+  // Compute news blackout state once for the whole sweep.
+  // When a high-impact event (NFP, FOMC, CPI, rate decision) is in its
+  // blackout window, affected setups are suppressed.
+  const newsBlackout = getNewsBlackout();
+
   // Consolidate raw signals into tradeable setups (one per symbol + direction).
   // This MUST happen before dispatch so Discord sends setup embeds (with
   // regime, risk sizing, TV deep link) instead of individual signal embeds.
   const { setups, conflicted: conflictedSetups } = consolidate(filtered, {
     livePrices,
     regimes,
+    newsBlackout,
   });
 
   // Persist ScanResult rows (best-effort) — one row per filtered signal.
@@ -438,6 +456,9 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
 
   const duration = Date.now() - startedAt;
 
+  // Clear the indicator cache — it's per-scan, not persistent.
+  clearIndicatorCache();
+
   return {
     count: filtered.length,
     signals: filtered,
@@ -459,6 +480,9 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
       deduped,
       setupCount: setups.length,
       conflictedSetupCount: conflictedSetups.length,
+      newsBlackoutActive: newsBlackout.inBlackout,
+      newsActiveLabel: formatActiveEvents(newsBlackout),
+      newsUpcomingLabel: formatUpcomingEvents(newsBlackout),
       duration,
     },
   };

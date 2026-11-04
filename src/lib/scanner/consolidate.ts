@@ -22,6 +22,7 @@
 import type { ScanSignal } from "./types";
 import type { Regime, RegimeAssessment } from "./regime";
 import { strategyFitsRegime } from "./regime";
+import { isSymbolAffected, type NewsBlackoutResult } from "./news";
 
 export interface Setup {
   symbol: string;
@@ -39,6 +40,8 @@ export interface Setup {
   regime?: Regime;                      // bull/bear/sideways (from runScan)
   regimeLabel?: string;                 // human-readable regime
   regimeFits?: boolean;                 // does the signal direction fit the regime?
+  newsBlackout?: boolean;               // true if a high-impact event is active
+  newsLabel?: string;                   // e.g. "NFP active"
 }
 
 export interface ConsolidateOptions {
@@ -51,6 +54,8 @@ export interface ConsolidateOptions {
   /** Drop setups where the signal direction conflicts with the regime.
    *  Default true — trend/EA counter-trend signals are suppressed. */
   applyRegimeGate?: boolean;
+  /** News blackout state — when active, affected setups are suppressed. */
+  newsBlackout?: NewsBlackoutResult | null;
 }
 
 export function consolidate(
@@ -62,6 +67,7 @@ export function consolidate(
   const livePrices = opts.livePrices ?? {};
   const regimes = opts.regimes ?? {};
   const applyRegimeGate = opts.applyRegimeGate ?? true;
+  const newsBlackout = opts.newsBlackout ?? null;
 
   // Group all signals by symbol
   const bySymbol = new Map<string, ScanSignal[]>();
@@ -127,6 +133,21 @@ export function consolidate(
         }
       }
 
+      // News blackout: suppress setups on currencies affected by a high-impact event
+      // (NFP, FOMC, CPI, rate decisions). These cause violent, unpredictable moves.
+      let newsAffected = false;
+      let newsLabel: string | undefined;
+      if (newsBlackout && newsBlackout.inBlackout) {
+        newsAffected = isSymbolAffected(symbol, best.assetClass, newsBlackout);
+        if (newsAffected) {
+          newsLabel = newsBlackout.activeEvents
+            .map((e) => e.name.split(" ")[0]) // "NFP", "FOMC", etc.
+            .join("+") + " active";
+          dropped++;
+          continue; // suppress the setup entirely during the blackout window
+        }
+      }
+
       // Blended setup score (placeholder weights — tune against forward-test data)
       // Start from the best signal's score, then reward cross-family + cross-TF
       // agreement, penalize conflicts.
@@ -156,6 +177,8 @@ export function consolidate(
         regime: regime?.regime,
         regimeLabel: regime?.label,
         regimeFits,
+        newsBlackout: newsAffected,
+        newsLabel,
       };
 
       if (conflicted) conflictedOut.push(setup);
