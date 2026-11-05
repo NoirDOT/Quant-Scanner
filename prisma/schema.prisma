@@ -236,3 +236,29 @@ model PaperTradeAccount {
 
   @@map("scanner_paper_trade_account")
 }
+
+// User-created strategies — built from the UI, stored as rule definitions.
+// Evaluated at scan time by the custom strategy engine.
+model CustomStrategy {
+  id          String   @id @default(cuid())
+  key         String   @unique  // e.g. "custom-my-rsi-dip"
+  name        String
+  description String   @default("")
+  family      String   @default("trend")  // trend | ict | trader | ea | horc | community
+  enabled     Boolean  @default(true)
+  timeframesJson String @default("[]")  // ["4h","1d"]
+  // The rule tree — stored as JSON. Structure:
+  // {
+  //   "entry": { "logic": "and", "conditions": [...] },
+  //   "exit":  { "stopType": "atr"|"fixed"|"ema", "stopValue": 1.5, "targetType": "rr", "targetValue": 2 },
+  //   "score": 65
+  // }
+  // Each condition: { "indicator": "ema"|"rsi"|"adx"|"macd"|"supertrend"|"price", "period": 21, "comparator": ">"|"<"|"crosses_above"|"crosses_below", "value": "ema50"|"close"|number }
+  rulesJson   String   @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([enabled])
+  @@index([family])
+  @@map("scanner_custom_strategies")
+}

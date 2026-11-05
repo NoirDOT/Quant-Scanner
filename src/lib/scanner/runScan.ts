@@ -34,6 +34,7 @@ import { consolidate, type Setup } from "./consolidate";
 import { classifyRegime, type RegimeAssessment } from "./regime";
 import { getNewsBlackout, formatActiveEvents, formatUpcomingEvents } from "./news";
 import { createIndicatorCache, setIndicatorCache, clearIndicatorCache } from "./indicatorCache";
+import { runCustomStrategies } from "./customStrategyEngine";
 
 export interface RunScanOptions {
   strategyType?: string;             // "trend" | "ict" | "trader" | "ea" | "horc" | "all"
@@ -285,6 +286,18 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
           } catch (err) {
             console.error(`[scanner] HORC ${hk} failed:`, err);
           }
+        }
+      }
+      // Custom strategies (user-created from the UI)
+      if (!strategyType || strategyType === "all" || strategyType === "custom") {
+        try {
+          const customSignals = await runCustomStrategies(ctx);
+          for (const s of customSignals) {
+            s.metadata = { ...(s.metadata ?? {}), barCloseMs, barTime: lastBarTime };
+          }
+          localSignals.push(...customSignals);
+        } catch (err) {
+          console.error(`[scanner] custom strategies failed for ${inst.symbol}:`, err);
         }
       }
     }

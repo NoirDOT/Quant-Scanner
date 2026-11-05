@@ -3,11 +3,12 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import {
   RefreshCw, Clock, ArrowUp, ArrowDown, Zap, Radio,
-  ChevronRight, ArrowLeft, Layers, Eye, Filter, TrendingUp, TrendingDown,
+  ChevronRight, ArrowLeft, Layers, Eye, Filter, TrendingUp, TrendingDown, Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ScanSignal } from "@/lib/scanner/types";
+import { StrategyBuilder } from "./StrategyBuilder";
 
 // ─── Setup type (mirrors src/lib/scanner/consolidate.ts Setup) ────────────────
 
@@ -115,6 +116,7 @@ export function IctScannerPage() {
   // View mode: "setups" = consolidated tradeable setups (default), "raw" = all
   // signals grouped by strategy (the old card view, kept for debugging).
   const [viewMode, setViewMode] = useState<"setups" | "raw">("setups");
+  const [showStrategyBuilder, setShowStrategyBuilder] = useState(false);
 
   const runScan = useCallback(async (silent = false) => {
     setLoading(true);
@@ -298,6 +300,15 @@ export function IctScannerPage() {
                 {loading ? <RefreshCw size={12} className="animate-spin" /> : <Zap size={12} />}
                 {loading ? "Scanning" : "Scan"}
               </button>
+              <button
+                onClick={() => setShowStrategyBuilder(true)}
+                className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-opacity hover:opacity-80"
+                style={{ borderColor: "var(--rule)", color: "var(--ink)", background: "var(--paper)" }}
+                title="Build custom strategies"
+              >
+                <Wand2 size={12} />
+                Build
+              </button>
             </div>
           </div>
 
@@ -478,6 +489,11 @@ export function IctScannerPage() {
           </>
         )}
       </div>
+
+      {/* Strategy Builder modal */}
+      {showStrategyBuilder && (
+        <StrategyBuilder onClose={() => setShowStrategyBuilder(false)} />
+      )}
     </div>
   );
 }
