@@ -1,13 +1,11 @@
-# Quant Scanner — Forward-Test Resolver
+# Quant Scanner — Forward-Test Resolver + Paper Trading
 # ----------------------------------------------------------
-# Nightly job that replays subsequent candles for each unresolved
-# ForwardTestSignal to compute R multiples (win/loss/timeout).
+# Nightly job that:
+#   1. Resolves forward-test signals (replays candles, computes R multiples)
+#   2. Closes open paper trades (same logic, updates account balance + P&L)
+#   3. Posts the daily P&L summary to Discord
 #
 # Runs once/day at 23:30 UTC (after the 21:05 scan finishes).
-# Takes ~60s for 200 signals.
-#
-# Manual trigger:
-#   GitHub repo → Actions tab → "Resolve Forward Tests" → Run workflow
 # ----------------------------------------------------------
 
 name: Resolve Forward Tests
@@ -31,16 +29,37 @@ jobs:
             -X POST \
             -H "Authorization: Bearer ${{ secrets.API_SECRET }}" \
             "${{ vars.SCANNER_URL || 'https://quant-scanner-g7r7.vercel.app' }}/api/scanner/forward-tests/resolve?batch=200")
-
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
 
+      - name: Close paper trades
+        run: |
+          echo "=== Closing paper trades at $(date -u) ==="
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.API_SECRET }}" \
+            "${{ vars.SCANNER_URL || 'https://quant-scanner-g7r7.vercel.app' }}/api/scanner/paper-trades/close?maxBars=50")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+
+      - name: Post daily P&L summary
+        run: |
+          echo "=== Posting daily P&L summary at $(date -u) ==="
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.API_SECRET }}" \
+            "${{ vars.SCANNER_URL || 'https://quant-scanner-g7r7.vercel.app' }}/api/scanner/paper-trades/post-summary")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
           echo "HTTP Status: $HTTP_CODE"
           echo "Response: $BODY"
 
           if [ "$HTTP_CODE" != "200" ]; then
-            echo "::error::Resolve returned HTTP $HTTP_CODE"
-            exit 1
+            echo "::warning::Post summary returned HTTP $HTTP_CODE (non-fatal)"
           fi
 
-          echo "=== Resolve complete ==="
+          echo "=== Resolve + paper trading complete ==="

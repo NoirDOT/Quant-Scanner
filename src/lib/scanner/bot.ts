@@ -158,3 +158,88 @@ export async function deleteOldMessages(maxAgeHours = 24): Promise<{ deleted: nu
   console.log(`[bot] deleted ${deleted}/${oldMessages.length} old messages (out of ${messages.length} total)`);
   return { deleted, total: messages.length };
 }
+
+// ─── Daily P&L summary ────────────────────────────────────────────────────
+
+import type { PaperTradeSummary } from "./paperTrade";
+
+/**
+ * Post a daily P&L summary embed to the Discord channel.
+ * Shows: account balance, ROI, win rate, today's closed trades, open positions.
+ */
+export async function postDailySummary(summary: PaperTradeSummary): Promise<boolean> {
+  if (!BOT_TOKEN || !CHANNEL_ID) return false;
+
+  const a = summary.account;
+  const pnlEmoji = a.totalRealizedPnl >= 0 ? "🟢" : "🔴";
+  const roiEmoji = a.roi >= 0 ? "📈" : "📉";
+
+  const lines: string[] = [
+    `**Balance:** $${a.currentBalance.toFixed(2)} / $${a.startingBalance.toFixed(2)} start`,
+    `**ROI:** ${roiEmoji} ${a.roi.toFixed(2)}%`,
+    `**Total P&L:** ${pnlEmoji} $${a.totalRealizedPnl.toFixed(2)} (${a.totalRealizedR >= 0 ? "+" : ""}${a.totalRealizedR.toFixed(1)}R)`,
+    `**Win Rate:** ${a.winRate.toFixed(1)}% (${a.totalWins}W / ${a.totalLosses}L / ${a.totalTimeouts}T)`,
+    `**Open Risk:** $${a.openRisk.toFixed(2)} (${summary.openTrades.length} open trades)`,
+  ];
+
+  // Today's closed trades
+  if (summary.todayClosed.length > 0) {
+    lines.push("", `**Today's Closed Trades (${summary.todayClosed.length}):**`, "```");
+    lines.push("  PAIR           DIR    OUTCOME   R       P&L");
+    lines.push("  ─────────────  ─────  ────────  ──────  ─────────");
+    for (const t of summary.todayClosed.slice(0, 10)) {
+      const pair = t.symbol.padEnd(14).slice(0, 14);
+      const dir = t.direction.toUpperCase().padEnd(5).slice(0, 5);
+      const outcome = t.outcome.padEnd(8).slice(0, 8);
+      const r = (t.realizedR >= 0 ? "+" : "") + t.realizedR.toFixed(1);
+      const pnl = (t.realizedPnl >= 0 ? "+" : "") + "$" + t.realizedPnl.toFixed(0);
+      lines.push(`  ${pair}  ${dir}  ${outcome}  ${r.padStart(6)}  ${pnl.padStart(10)}`);
+    }
+    lines.push("```");
+  } else {
+    lines.push("", "*No trades closed today.*");
+  }
+
+  // Open positions
+  if (summary.openTrades.length > 0) {
+    lines.push("", `**Open Positions (${summary.openTrades.length}):**`, "```");
+    lines.push("  PAIR           DIR    ENTRY       STOP        TARGET      SCORE");
+    lines.push("  ─────────────  ─────  ──────────  ──────────  ──────────  ─────");
+    for (const t of summary.openTrades.slice(0, 10)) {
+      const pair = t.symbol.padEnd(14).slice(0, 14);
+      const dir = t.direction.toUpperCase().padEnd(5).slice(0, 5);
+      const entry = t.entryPrice.toFixed(4).padStart(10).slice(0, 10);
+      const stop = t.stopPrice.toFixed(4).padStart(10).slice(0, 10);
+      const target = t.targetPrice.toFixed(4).padStart(10).slice(0, 10);
+      const score = String(Math.round(t.score)).padStart(5).slice(0, 5);
+      lines.push(`  ${pair}  ${dir}  ${entry}  ${stop}  ${target}  ${score}`);
+    }
+    lines.push("```");
+  }
+
+  lines.push("", "_Daily summary posted by the paper-trading bot_");
+
+  const embed = {
+    title: `📊  Daily P&L Summary`,
+    description: lines.join("\n"),
+    color: a.totalRealizedPnl >= 0 ? 0x22c55e : 0xef4444,
+    timestamp: new Date().toISOString(),
+    footer: { text: "Quant Scanner · paper trading · daily report" },
+  };
+
+  try {
+    const res = await fetch(`${API_BASE}/channels/${CHANNEL_ID}/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bot ${BOT_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ embeds: [embed] }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return res.ok;
+  } catch (err) {
+    console.error("[bot] postDailySummary error:", err);
+    return false;
+  }
+}

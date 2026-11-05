@@ -15,6 +15,7 @@ import type { ScanSignal } from "../types";
 import type { Setup } from "../consolidate";
 import { db } from "@/lib/db";
 import { sendDiscordAlert, sendDiscordSetupAlert } from "./discord";
+import { openPaperTrade } from "../paperTrade";
 
 // Re-export init functions for the alerts API route
 export { initTelegram } from "./telegram";
@@ -225,6 +226,12 @@ export async function dispatchAlerts(
           dispatched++;
           dispatchedSignals.push(setup.best);
           newDispatched.push({ signalKey: setupKey(setup), signal: setup.best, channel: "discord" });
+
+          // Open a paper trade for this dispatched setup (best-effort,
+          // errors don't block the alert)
+          openPaperTrade(setup, opts.fxRates).catch((err) =>
+            console.error("[alerts] paper trade open error:", err)
+          );
         } catch (err) {
           console.error("[alerts] discord setup error:", err);
           failed++;

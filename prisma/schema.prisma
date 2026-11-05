@@ -176,3 +176,63 @@ model SymbolDataStatus {
   @@index([checkedAt])
   @@map("scanner_symbol_data_status")
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// PAPER TRADING — virtual trade tracking + account equity
+// ════════════════════════════════════════════════════════════════════════
+
+model PaperTrade {
+  id            String   @id @default(cuid())
+  // Links to the dispatched setup (matches DispatchedSignal.signalKey)
+  setupKey      String   @unique
+  strategyKey   String
+  symbol        String
+  timeframe     String
+  direction     String   // "long" | "short"
+  // Trade parameters (from the setup's best signal)
+  entryPrice    Float
+  stopPrice     Float
+  targetPrice   Float
+  score         Float
+  grade         String?
+  familiesJson  String   @default("[]")
+  // Position sizing (from risk.ts)
+  lots          Float    @default(0)
+  riskAmount    Float    @default(0)
+  pipValuePerLot Float  @default(0)
+  // Trade lifecycle
+  status        String   @default("open")  // "open" | "win" | "loss" | "timeout"
+  openedAt      DateTime @default(now())
+  closedAt      DateTime?
+  exitPrice     Float?
+  barsToExit    Int?
+  realizedR     Float?    // +2.0 = 2R win, -1.0 = 1R loss
+  realizedPnl   Float?    // in USD
+  // Regime when the trade was opened (for later analysis)
+  regime        String?
+
+  @@index([status])
+  @@index([symbol])
+  @@index([openedAt])
+  @@index([closedAt])
+  @@map("scanner_paper_trades")
+}
+
+// Tracks running account equity. There's one row (id="main") that gets
+// updated as trades close. Initialized from PAPER_TRADE_BALANCE env var
+// (default $10,000) on first use.
+model PaperTradeAccount {
+  id            String   @id @default("main")
+  startingBalance Float  @default(10000)
+  currentBalance Float  @default(10000)
+  totalTrades   Int      @default(0)
+  totalWins     Int      @default(0)
+  totalLosses   Int      @default(0)
+  totalTimeouts Int      @default(0)
+  totalRealizedR Float   @default(0)
+  totalRealizedPnl Float @default(0)
+  openRisk      Float    @default(0)  // sum of riskAmount for open trades
+  updatedAt     DateTime @updatedAt
+
+  @@map("scanner_paper_trade_account")
+}
