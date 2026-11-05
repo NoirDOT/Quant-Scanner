@@ -74,23 +74,20 @@ export async function POST(req: NextRequest) {
       const signalMs = sig.barTime != null ? sig.barTime * 1000 : sig.signalAt.getTime();
       const after = candles.filter((c) => c.time * 1000 > signalMs);
 
-      let outcome: "win" | "loss" | "timeout" = "timeout";
+      let outcome: "win" | "loss" | "timeout" | null = null;
       let exitPrice: number | null = null;
       let exitAt: Date | null = null;
       let barsToExit = 0;
       const risk = Math.abs(sig.entryPrice - sig.stopPrice);
       if (risk <= 0) {
-        // Degenerate — mark as timeout and skip
-        await db.forwardTestSignal.update({
-          where: { id: sig.id },
-          data: { resolved: true, outcome: "timeout", barsToExit: 0 },
-        });
-        timeouts++;
-        resolved++;
+        // Degenerate — can't resolve without a valid stop. Skip silently.
         continue;
       }
 
-      for (let i = 0; i < Math.min(after.length, maxBars); i++) {
+      // Iterate through available bars after the signal. If stop/target hits,
+      // resolve immediately. If neither hits AND we haven't seen maxBars yet,
+      // leave the signal unresolved — a future run will pick it up.
+      for (let i = 0; i < after.length; i++) {
         const c = after[i];
         barsToExit = i + 1;
         if (sig.direction === "long") {
@@ -134,6 +131,27 @@ export async function POST(req: NextRequest) {
             break;
           }
         }
+      }
+
+      // If no hit yet, check whether enough bars have passed to declare timeout.
+      // Only resolve as timeout if we've seen AT LEAST maxBars bars — otherwise
+      // leave the signal unresolved so a future run can check newer candles.
+      if (outcome === null) {
+        if (after.length < maxBars) {
+          // Not enough bars yet — leave for a future run to resolve.
+          // Update barsToExit so the UI can show progress.
+          try {
+            await db.forwardTestSignal.update({
+              where: { id: sig.id },
+              data: { barsToExit },
+            });
+          } catch (e) {
+            // ignore update errors
+          }
+          continue;
+        }
+        // We've seen maxBars bars with no hit → declare timeout
+        outcome = "timeout";
       }
 
       // Compute R multiple

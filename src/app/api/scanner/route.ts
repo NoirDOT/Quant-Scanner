@@ -39,19 +39,18 @@ const ScanBody = z.object({
   filterKeys: z.array(z.string().max(80)).max(20).optional(),
 }).strict();
 
-/** Returns true if the caller provided a valid admin or browser secret. */
+/** Returns true if the caller provided a valid ADMIN secret (API_SECRET or
+ *  CRON_SECRET). BROWSER_SECRET is NOT accepted here — it's public in the JS
+ *  bundle, so accepting it would let anyone trigger DB writes + Discord sends. */
 function isPrivileged(req: NextRequest): boolean {
   const secrets = [
     process.env.API_SECRET,
-    process.env.BROWSER_SECRET,
     process.env.CRON_SECRET,
   ].filter((s): s is string => typeof s === "string" && s.length > 0);
   if (secrets.length === 0) return true; // dev mode — no secrets configured
   const authHeader = req.headers.get("authorization") ?? "";
   const token = authHeader.replace(/^Bearer\s+/i, "");
-  const queryKey = req.nextUrl.searchParams.get("key") ?? "";
-  const provided = token || queryKey;
-  return !!provided && secrets.includes(provided);
+  return !!token && secrets.includes(token);
 }
 
 export async function POST(req: NextRequest) {

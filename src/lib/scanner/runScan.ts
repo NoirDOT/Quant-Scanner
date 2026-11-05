@@ -157,6 +157,10 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
 
   const allSignals: ScanSignal[] = [];
   const livePrices: Record<string, number | null> = {};
+  /** FX rates for risk sizing — map of quote currency → USD price of 1 unit.
+   *  e.g. { "JPY": 0.0067, "GBP": 1.27, "EUR": 1.08 }
+   *  Derived from livePrices as the scan progresses. */
+  const fxRates: Record<string, number> = {};
   const symbolDataStatus: RunScanMeta["symbolDataStatus"] = [];
   /** Per-symbol regime assessment, computed from the daily candle data.
    *  Used by consolidate() to gate counter-trend setups. */
@@ -277,10 +281,17 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
         (!strategies || strategies.length === 0 || strategies.includes("ict-2022-model"))) {
       const m2022 = await model2022Scanner(inst.symbol, inst.display, inst.assetClass, "1d", "4h", "1h");
       if (m2022) {
-        // The 2022 model uses 1h/4h/1d data internally — use now as the bar
-        // close time (it evaluates at the sweep moment). barTime is left unset
-        // so dedupe falls back to per-sweep dedupe (no cross-sweep suppression).
-        m2022.metadata = { ...(m2022.metadata ?? {}), barCloseMs: Date.now() };
+        // The 2022 model fetches its own data, so we don't have the bar time
+        // from the outer loop. Use the current time as a fallback for barCloseMs
+        // (killzone scoring will be approximately correct), and set barTime to
+        // the current bar's open time so cross-sweep dedupe works (otherwise
+        // it re-alerts every sweep when it's the best signal).
+        const nowSec = Math.floor(Date.now() / 1000);
+        m2022.metadata = {
+          ...(m2022.metadata ?? {}),
+          barCloseMs: Date.now(),
+          barTime: nowSec,
+        };
         localSignals.push(m2022);
       }
     }
@@ -323,6 +334,40 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
       instrumentsSkipped++;
     }
   });
+
+  // Derive FX rates from live prices for risk sizing.
+  // For each forex pair, the live price tells us how many USD 1 unit of the
+  // quote currency is worth. e.g. USDJPY=149.5 → 1 JPY = 1/149.5 USD = 0.00669.
+  for (const [symbol, price] of Object.entries(livePrices)) {
+    if (price == null || !Number.isFinite(price) || price <= 0) continue;
+    if (!symbol.includes("=") && !symbol.endsWith("=X")) continue;
+    const pair = symbol.replace("=X", "");
+    if (pair.length !== 6) continue;
+    const base = pair.slice(0, 3);
+    const quote = pair.slice(3, 6);
+    if (base === "USD") {
+      // e.g. USDJPY=149.5 → 1 JPY = 1/149.5 USD
+      fxRates[quote] = 1 / price;
+    } else if (quote === "USD") {
+      // e.g. EURUSD=1.08 → 1 EUR = 1.08 USD
+      fxRates[base] = price;
+    }
+    // Cross pairs (e.g. EURGBP) don't directly give us USD rates, but we can
+    // derive them if we have the USD rate for one of the currencies.
+  }
+  // Cross-pair derivation: if we know GBP/USD and EUR/GBP, we can compute EUR/USD.
+  for (const [symbol, price] of Object.entries(livePrices)) {
+    if (price == null || !Number.isFinite(price) || price <= 0) continue;
+    const pair = symbol.replace("=X", "");
+    if (pair.length !== 6) continue;
+    const base = pair.slice(0, 3);
+    const quote = pair.slice(3, 6);
+    if (base === "USD" || quote === "USD") continue; // direct pair, already handled
+    // EURGBP: if we know GBP/USD, then EUR/USD = EURGBP × GBP/USD
+    if (fxRates[quote] && !fxRates[base]) {
+      fxRates[base] = price * fxRates[quote];
+    }
+  }
 
   // Attach catalog stats (sync, reads from global cached earlier)
   attachCatalogStats(allSignals);
@@ -395,6 +440,7 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
       const result = await dispatchAlerts(filtered, {
         trackForward: shouldTrackForward,
         setups: setups.length > 0 ? setups : undefined,
+        fxRates,
       });
       dispatched = result.dispatched;
       deduped = result.deduped;

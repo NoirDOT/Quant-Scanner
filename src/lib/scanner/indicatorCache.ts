@@ -40,13 +40,18 @@ export interface IndicatorCache {
 export function createIndicatorCache(): IndicatorCache {
   const cache = new Map<string, unknown>();
 
-  function key(symbol: string, tf: string, name: string, ...params: number[]): string {
-    return `${symbol}:${tf}:${name}:${params.join(",")}`;
+  // Key includes symbol, tf, indicator name, params, AND the candle count +
+  // last bar time. This prevents overlapping scans (cron + open browser tab)
+  // or backtests running on shorter slices from sharing the wrong indicators.
+  function key(symbol: string, tf: string, name: string, candles: Candle[], ...params: number[]): string {
+    const count = candles.length;
+    const lastBarTime = candles.length > 0 ? candles[candles.length - 1].time : 0;
+    return `${symbol}:${tf}:${name}:${params.join(",")}:n${count}:t${lastBarTime}`;
   }
 
   return {
     getEma(symbol, tf, candles, period) {
-      const k = key(symbol, tf, "ema", period);
+      const k = key(symbol, tf, "ema", candles, period);
       if (cache.has(k)) return cache.get(k) as (number | null)[];
       const closes = candles.map((c) => c.close);
       const result = ema(closes, period);
@@ -55,7 +60,7 @@ export function createIndicatorCache(): IndicatorCache {
     },
 
     getStackedEma(symbol, tf, candles) {
-      const k = key(symbol, tf, "stackedEma");
+      const k = key(symbol, tf, "stackedEma", candles);
       if (cache.has(k)) return cache.get(k) as ReturnType<typeof stackedEma>;
       const closes = candles.map((c) => c.close);
       const result = stackedEma(closes);
@@ -64,7 +69,7 @@ export function createIndicatorCache(): IndicatorCache {
     },
 
     getAtr(symbol, tf, candles, period = 14) {
-      const k = key(symbol, tf, "atr", period);
+      const k = key(symbol, tf, "atr", candles, period);
       if (cache.has(k)) return cache.get(k) as ReturnType<typeof atr>;
       const highs = candles.map((c) => c.high);
       const lows = candles.map((c) => c.low);
@@ -75,7 +80,7 @@ export function createIndicatorCache(): IndicatorCache {
     },
 
     getRsi(symbol, tf, candles, period = 14) {
-      const k = key(symbol, tf, "rsi", period);
+      const k = key(symbol, tf, "rsi", candles, period);
       if (cache.has(k)) return cache.get(k) as (number | null)[];
       const closes = candles.map((c) => c.close);
       const result = rsi(closes, period);
@@ -84,7 +89,7 @@ export function createIndicatorCache(): IndicatorCache {
     },
 
     getAdx(symbol, tf, candles, period = 14) {
-      const k = key(symbol, tf, "adx", period);
+      const k = key(symbol, tf, "adx", candles, period);
       if (cache.has(k)) return cache.get(k) as ReturnType<typeof adx>;
       const highs = candles.map((c) => c.high);
       const lows = candles.map((c) => c.low);
@@ -95,7 +100,7 @@ export function createIndicatorCache(): IndicatorCache {
     },
 
     getSupertrend(symbol, tf, candles, period = 10, multiplier = 3) {
-      const k = key(symbol, tf, "supertrend", period, multiplier);
+      const k = key(symbol, tf, "supertrend", candles, period, multiplier);
       if (cache.has(k)) return cache.get(k) as ReturnType<typeof supertrend>;
       const highs = candles.map((c) => c.high);
       const lows = candles.map((c) => c.low);
@@ -106,7 +111,7 @@ export function createIndicatorCache(): IndicatorCache {
     },
 
     getMacd(symbol, tf, candles) {
-      const k = key(symbol, tf, "macd");
+      const k = key(symbol, tf, "macd", candles);
       if (cache.has(k)) return cache.get(k) as ReturnType<typeof macd>;
       const closes = candles.map((c) => c.close);
       const result = macd(closes);
@@ -115,7 +120,7 @@ export function createIndicatorCache(): IndicatorCache {
     },
 
     getDonchian(symbol, tf, candles, period = 20) {
-      const k = key(symbol, tf, "donchian", period);
+      const k = key(symbol, tf, "donchian", candles, period);
       if (cache.has(k)) return cache.get(k) as ReturnType<typeof donchianFromCloses>;
       const highs = candles.map((c) => c.high);
       const lows = candles.map((c) => c.low);
@@ -126,7 +131,7 @@ export function createIndicatorCache(): IndicatorCache {
     },
 
     getHeikinAshi(symbol, tf, candles) {
-      const k = key(symbol, tf, "heikinAshi");
+      const k = key(symbol, tf, "heikinAshi", candles);
       if (cache.has(k)) return cache.get(k) as ReturnType<typeof heikinAshi>;
       const opens = candles.map((c) => c.open);
       const highs = candles.map((c) => c.high);
@@ -138,7 +143,7 @@ export function createIndicatorCache(): IndicatorCache {
     },
 
     getIchimoku(symbol, tf, candles) {
-      const k = key(symbol, tf, "ichimoku");
+      const k = key(symbol, tf, "ichimoku", candles);
       if (cache.has(k)) return cache.get(k) as ReturnType<typeof ichimoku>;
       const highs = candles.map((c) => c.high);
       const lows = candles.map((c) => c.low);
@@ -149,7 +154,7 @@ export function createIndicatorCache(): IndicatorCache {
     },
 
     getPsar(symbol, tf, candles) {
-      const k = key(symbol, tf, "psar");
+      const k = key(symbol, tf, "psar", candles);
       if (cache.has(k)) return cache.get(k) as ReturnType<typeof psar>;
       const highs = candles.map((c) => c.high);
       const lows = candles.map((c) => c.low);

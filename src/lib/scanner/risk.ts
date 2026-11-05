@@ -2,10 +2,12 @@
 // Position sizing — converts a setup's entry/stop into a lot size given
 // account size + risk percentage.
 //
-// "Add risk sizing. Given account size and a risk percentage, show the lot
-// size per setup, using the pip and contract values you already define."
+// Per-instrument contract specs (contract size, pip size, quote currency)
+// + live FX conversion so the lot size is correct for JPY pairs, crosses,
+// commodities, indices, and crypto.
 //
-// This module is pure (no DB, no I/O) so it can run client-side.
+// The live FX rates are passed in by runScan (which already fetches them)
+// so we don't double-fetch.
 
 import type { ScanSignal } from "./types";
 
@@ -33,62 +35,147 @@ export interface PositionSize {
   label: string;
 }
 
-/** Pip size per asset class. Forex majors = 0.0001, JPY pairs = 0.01, etc. */
-function pipSize(symbol: string, assetClass: string): number {
-  if (assetClass === "forex") {
-    return symbol.includes("JPY") ? 0.01 : 0.0001;
-  }
-  return 1; // commodities, indices, crypto use whole units
+// ─── Per-instrument contract specs ──────────────────────────────────────────
+// Keyed by Yahoo Finance symbol. Each spec defines:
+//   contractSize: how many units one standard lot represents
+//   pipSize: the smallest meaningful price increment
+//   quoteCurrency: the currency the price is denominated in (for USD conversion)
+
+interface InstrumentSpec {
+  contractSize: number;
+  pipSize: number;
+  quoteCurrency: string;
 }
 
-/** Contract size per asset class. Forex standard lot = 100,000 units. */
-function contractSize(assetClass: string): number {
-  switch (assetClass) {
-    case "forex": return 100_000;
-    case "crypto": return 1;
-    case "commodity": return 100;    // gold: 100 oz/contract
-    case "index": return 1;           // 1 point = $1
-    default: return 1;
+const INSTRUMENT_SPECS: Record<string, InstrumentSpec> = {
+  // Forex majors — JPY pairs have pipSize 0.01
+  "USDJPY=X": { contractSize: 100_000, pipSize: 0.01, quoteCurrency: "JPY" },
+  "EURJPY=X": { contractSize: 100_000, pipSize: 0.01, quoteCurrency: "JPY" },
+  "GBPJPY=X": { contractSize: 100_000, pipSize: 0.01, quoteCurrency: "JPY" },
+  "AUDJPY=X": { contractSize: 100_000, pipSize: 0.01, quoteCurrency: "JPY" },
+  "CHFJPY=X": { contractSize: 100_000, pipSize: 0.01, quoteCurrency: "JPY" },
+  "NZDJPY=X": { contractSize: 100_000, pipSize: 0.01, quoteCurrency: "JPY" },
+  "CADJPY=X": { contractSize: 100_000, pipSize: 0.01, quoteCurrency: "JPY" },
+
+  // Forex crosses (non-JPY) — quote currency is the second 3 letters
+  "EURGBP=X": { contractSize: 100_000, pipSize: 0.0001, quoteCurrency: "GBP" },
+  "EURCAD=X": { contractSize: 100_000, pipSize: 0.0001, quoteCurrency: "CAD" },
+  "EURAUD=X": { contractSize: 100_000, pipSize: 0.0001, quoteCurrency: "AUD" },
+  "GBPCAD=X": { contractSize: 100_000, pipSize: 0.0001, quoteCurrency: "CAD" },
+  "GBPCHF=X": { contractSize: 100_000, pipSize: 0.0001, quoteCurrency: "CHF" },
+
+  // Forex majors (USD quote) — standard
+  "EURUSD=X": { contractSize: 100_000, pipSize: 0.0001, quoteCurrency: "USD" },
+  "GBPUSD=X": { contractSize: 100_000, pipSize: 0.0001, quoteCurrency: "USD" },
+  "AUDUSD=X": { contractSize: 100_000, pipSize: 0.0001, quoteCurrency: "USD" },
+  "USDCAD=X": { contractSize: 100_000, pipSize: 0.0001, quoteCurrency: "CAD" },
+  "USDCHF=X": { contractSize: 100_000, pipSize: 0.0001, quoteCurrency: "CHF" },
+  "NZDUSD=X": { contractSize: 100_000, pipSize: 0.0001, quoteCurrency: "USD" },
+
+  // Commodities — vary widely
+  "GC=F":   { contractSize: 100,   pipSize: 0.1,   quoteCurrency: "USD" }, // Gold: 100 oz/lot, $0.10/pt
+  "SI=F":   { contractSize: 5000,  pipSize: 0.01,  quoteCurrency: "USD" }, // Silver: 5000 oz/lot, $0.01/pt
+  "CL=F":   { contractSize: 1000,  pipSize: 0.01,  quoteCurrency: "USD" }, // Crude: 1000 bbl/lot, $0.01/pt
+  "BZ=F":   { contractSize: 1000,  pipSize: 0.01,  quoteCurrency: "USD" }, // Brent
+  "NG=F":   { contractSize: 10000, pipSize: 0.001, quoteCurrency: "USD" }, // NatGas: 10000 MMBtu/lot
+  "HG=F":   { contractSize: 25000, pipSize: 0.01,  quoteCurrency: "USD" }, // Copper: 25000 lbs/lot
+  "PL=F":   { contractSize: 50,    pipSize: 0.1,   quoteCurrency: "USD" }, // Platinum: 50 oz/lot
+
+  // Crypto — 1 unit = 1 coin
+  "BTC-USD": { contractSize: 1, pipSize: 1, quoteCurrency: "USD" },
+  "ETH-USD": { contractSize: 1, pipSize: 1, quoteCurrency: "USD" },
+  "SOL-USD": { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
+  "XRP-USD": { contractSize: 1, pipSize: 0.0001, quoteCurrency: "USD" },
+  "DOGE-USD": { contractSize: 1, pipSize: 0.00001, quoteCurrency: "USD" },
+
+  // Indices — 1 contract = $1 per point
+  "^GSPC":   { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
+  "^NDX":    { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
+  "^DJI":    { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
+  "^RUT":    { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
+  "US500=F": { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
+  "USTEC=F": { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
+  "US30=F":  { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
+};
+
+/** Get the instrument spec, falling back to a generic forex default. */
+function getSpec(symbol: string, assetClass: string): InstrumentSpec {
+  if (INSTRUMENT_SPECS[symbol]) return INSTRUMENT_SPECS[symbol];
+  // Generic forex default — quote currency is the second 3 letters
+  if (assetClass === "forex") {
+    const pair = symbol.replace("=X", "");
+    if (pair.length === 6) {
+      const quote = pair.slice(3, 6);
+      const pipSize = quote === "JPY" ? 0.01 : 0.0001;
+      return { contractSize: 100_000, pipSize, quoteCurrency: quote };
+    }
   }
+  // Generic fallback
+  return { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" };
+}
+
+/**
+ * Convert a quote currency amount to USD using live FX rates.
+ * `fxRates` is a map of quote currency → USD price of 1 unit.
+ * e.g. { "JPY": 0.0067, "GBP": 1.27, "EUR": 1.08 }
+ */
+function quoteToUSD(
+  amount: number,
+  quoteCurrency: string,
+  fxRates?: Record<string, number>,
+): number {
+  if (quoteCurrency === "USD") return amount;
+  if (!fxRates) return amount; // best-effort fallback
+  const rate = fxRates[quoteCurrency];
+  if (!rate || !Number.isFinite(rate) || rate <= 0) return amount;
+  return amount * rate;
+}
+
+export interface ComputePositionSizeOpts {
+  /** Live FX rates — map of quote currency → USD price of 1 unit.
+   *  e.g. { "JPY": 0.0067, "GBP": 1.27, "EUR": 1.08 }
+   *  Pass null/omit to assume 1:1 (no conversion — wrong for non-USD). */
+  fxRates?: Record<string, number> | null;
 }
 
 /**
  * Compute position size for a signal given a risk config.
  *
- * Forex: riskAmount / (stopPips × pipValuePerLot) = lots
- *   where pipValuePerLot = (pipSize / price) × contractSize × price = pipSize × contractSize
- *   Wait — that simplifies. For a standard lot (100k units) of EUR/USD:
- *     pip = 0.0001, contract = 100,000, so pipValuePerLot = 0.0001 × 100,000 = $10
- *   For USD/JPY: pip = 0.01, contract = 100,000, pipValuePerLot = 0.01 × 100,000 = $1000?
- *   No — JPY pip value = (0.01 / price) × 100,000 ≈ $9.13 at 109.50
- *   We simplify by using a USD-quote assumption: for JPY pairs we divide the
- *   stop distance by the entry price to get "pips" in USD terms.
- *
- * For simplicity (this is a scanner, not a broker), we compute:
- *   riskAmount / stopDistance = max units (how many units you can hold so that
- *   a full stop-out costs exactly riskAmount)
- *   Then convert to lots (forex) or coins (crypto).
+ * Formula:
+ *   riskAmount = accountBalance × riskPerTrade  (in USD)
+ *   stopDistance = |entry - stop|  (in price units)
+ *   usdPerPointPerLot = contractSize × fxRate(quoteCurrency → USD)
+ *   lots = riskAmount / (stopDistance × usdPerPointPerLot)
+ *   pipValuePerLot = pipSize × usdPerPointPerLot
  */
-export function computePositionSize(signal: ScanSignal, config: RiskConfig): PositionSize | null {
+export function computePositionSize(
+  signal: ScanSignal,
+  config: RiskConfig,
+  opts: ComputePositionSizeOpts = {},
+): PositionSize | null {
   if (!signal.entryPrice || !signal.stopPrice) return null;
   const riskAmount = config.accountBalance * config.riskPerTrade;
   const stopDistance = Math.abs(signal.entryPrice - signal.stopPrice);
   if (stopDistance <= 0) return null;
 
-  // Max units = riskAmount / stopDistance (so a full stop = riskAmount loss)
-  const maxUnits = riskAmount / stopDistance;
-  const contract = contractSize(signal.assetClass);
-  const lots = maxUnits / contract;
-  const pip = pipSize(signal.symbol, signal.assetClass);
-  const stopPips = stopDistance / pip;
-  const pipValuePerLot = pip * contract;
+  const spec = getSpec(signal.symbol, signal.assetClass);
+  const fxRates = opts.fxRates ?? undefined;
+
+  // Per-lot USD value of a 1.0 price move
+  const usdPerPointPerLot = spec.contractSize * quoteToUSD(1, spec.quoteCurrency, fxRates);
+  if (usdPerPointPerLot <= 0) return null;
+
+  const pipValuePerLot = spec.pipSize * usdPerPointPerLot;
+  const stopPips = stopDistance / spec.pipSize;
+  const lots = riskAmount / (stopDistance * usdPerPointPerLot);
+  const units = lots * spec.contractSize;
 
   let label: string;
   if (signal.assetClass === "forex") {
     label = `${lots.toFixed(2)} lots`;
   } else if (signal.assetClass === "crypto") {
-    const coinUnits = maxUnits / signal.entryPrice;
-    label = `${coinUnits.toFixed(4)} ${signal.symbol.replace(/-USD$/, "").replace(/-USDT$/, "")}`;
+    const base = signal.symbol.replace(/-USD$/, "").replace(/-USDT$/, "");
+    label = `${units.toFixed(4)} ${base}`;
   } else {
     label = `${lots.toFixed(2)} contracts`;
   }
@@ -99,12 +186,12 @@ export function computePositionSize(signal: ScanSignal, config: RiskConfig): Pos
     stopPips,
     pipValuePerLot,
     lots,
-    units: maxUnits,
+    units,
     label,
   };
 }
 
-/** Default risk config — 1% of a $10,000 account. Override in the UI. */
+/** Default risk config — 1% of a $10,000 account. */
 export const DEFAULT_RISK_CONFIG: RiskConfig = {
   accountBalance: 10_000,
   riskPerTrade: 0.01,

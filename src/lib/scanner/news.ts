@@ -53,14 +53,22 @@ function firstFridayOfMonth(year: number, month: number): Date {
   return d;
 }
 
+/** Returns the Nth occurrence of dayOfWeek in the given month (1-indexed).
+ *  e.g. nthDayOfMonth(2026, 11, 3, 2) = the 2nd Wednesday of Dec 2026.
+ *  dayOfWeek: 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat */
 function nthDayOfMonth(year: number, month: number, dayOfWeek: number, n: number): Date {
-  const d = new Date(Date.UTC(year, month, 1, 18, 0, 0));
+  const d = new Date(Date.UTC(year, month, 1, 0, 0, 0));
   let count = 0;
-  while (d.getUTCDay() !== dayOfWeek || count < n - 1) {
+  // Walk forward day by day until we've seen the Nth occurrence
+  while (d.getUTCMonth() === month) {
+    if (d.getUTCDay() === dayOfWeek) {
+      count++;
+      if (count === n) return d;
+    }
     d.setUTCDate(d.getUTCDate() + 1);
-    if (d.getUTCDay() === dayOfWeek) count++;
   }
-  return d;
+  // Shouldn't happen — there are always at least 4 of any weekday in a month
+  return new Date(Date.UTC(year, month, 1, 0, 0, 0));
 }
 
 /** Returns the next N high-impact economic events from the recurring schedule. */
@@ -147,21 +155,27 @@ function getRecurringEvents(now: Date, lookAheadDays = 7): NewsEvent[] {
     }
   }
 
-  // Parse override events from env var
+  // Parse override events from env var (JSON array — colon-split was broken
+  // because ISO timestamps contain colons).
+  // Format: NEWS_BLACKOUT_OVERRIDE='[{"name":"CPI","currencies":["USD"],"startTime":"2026-11-13T13:30:00Z","blackoutMinutes":60}]'
   const override = process.env.NEWS_BLACKOUT_OVERRIDE;
   if (override) {
-    for (const entry of override.split(",")) {
-      const [currencies, isoTime, minutes] = entry.trim().split(":");
-      if (!currencies || !isoTime) continue;
-      const startTime = new Date(isoTime);
-      if (isNaN(startTime.getTime())) continue;
-      events.push({
-        name: "Custom Event",
-        currencies: currencies.split("|"),
-        startTime,
-        blackoutMinutes: parseInt(minutes ?? "60", 10),
-        impact: "high",
-      });
+    try {
+      const parsed: NewsEvent[] = JSON.parse(override);
+      for (const e of parsed) {
+        if (!e.startTime || !e.currencies || e.currencies.length === 0) continue;
+        const startTime = new Date(e.startTime);
+        if (isNaN(startTime.getTime())) continue;
+        events.push({
+          name: e.name ?? "Custom Event",
+          currencies: e.currencies,
+          startTime,
+          blackoutMinutes: e.blackoutMinutes ?? 60,
+          impact: e.impact ?? "high",
+        });
+      }
+    } catch (err) {
+      console.error("[news] NEWS_BLACKOUT_OVERRIDE parse error:", err);
     }
   }
 

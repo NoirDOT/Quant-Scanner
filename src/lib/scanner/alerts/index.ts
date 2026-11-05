@@ -34,6 +34,8 @@ export interface DispatchOptions {
   /** Consolidated setups — when provided, setup embeds are sent instead of
    *  individual signal embeds. */
   setups?: Setup[];
+  /** Live FX rates for risk sizing — map of quote currency → USD price of 1 unit. */
+  fxRates?: Record<string, number>;
 }
 
 /** Build the cross-sweep dedupe key for a SIGNAL. */
@@ -69,23 +71,33 @@ async function loadDispatchedKeys(keys: string[]): Promise<Set<string>> {
   }
 }
 
-/** Record newly-dispatched keys so the next sweep skips them. */
+/** Record newly-dispatched keys so the next sweep skips them.
+ *  Handles the case where multiple channels (discord+telegram+email) share
+ *  the same signalKey — a batch with duplicate keys would fail the entire
+ *  insert, so we catch P2002 and retry each row individually. */
 async function recordDispatched(rows: Array<{ signalKey: string; signal: ScanSignal; channel: string }>): Promise<void> {
   if (rows.length === 0) return;
+  const data = rows.map((r) => ({
+    signalKey: r.signalKey,
+    strategyKey: r.signal.strategyKey,
+    symbol: r.signal.symbol,
+    timeframe: r.signal.timeframe,
+    direction: r.signal.direction,
+    score: r.signal.score,
+    channel: r.channel,
+  }));
   try {
-    await db.dispatchedSignal.createMany({
-      data: rows.map((r) => ({
-        signalKey: r.signalKey,
-        strategyKey: r.signal.strategyKey,
-        symbol: r.signal.symbol,
-        timeframe: r.signal.timeframe,
-        direction: r.signal.direction,
-        score: r.signal.score,
-        channel: r.channel,
-      })),
-    });
-  } catch (err) {
-    console.error("[alerts] recordDispatched error:", err);
+    await db.dispatchedSignal.createMany({ data });
+  } catch (err: any) {
+    // P2002 = unique constraint violation — batch had duplicate keys.
+    // Retry each row individually so non-duplicate rows still get recorded.
+    if (err?.code === "P2002") {
+      await Promise.all(data.map((d) =>
+        db.dispatchedSignal.create({ data: d }).catch(() => null)
+      ));
+    } else {
+      console.error("[alerts] recordDispatched error:", err);
+    }
   }
 }
 
@@ -138,7 +150,7 @@ export async function dispatchAlerts(
     if (process.env.DISCORD_WEBHOOK_URL) {
       for (const setup of toSend) {
         try {
-          await sendDiscordSetupAlert(setup);
+          await sendDiscordSetupAlert(setup, opts.fxRates);
           await new Promise((r) => setTimeout(r, 1500)); // stay under 30 msg/min
           dispatched++;
           dispatchedSignals.push(setup.best);

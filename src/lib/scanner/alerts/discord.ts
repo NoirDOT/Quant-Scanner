@@ -165,7 +165,11 @@ export function buildSignalEmbed(signal: ScanSignal) {
 import type { Setup } from "../consolidate";
 import { computePositionSize, DEFAULT_RISK_CONFIG, type RiskConfig } from "../risk";
 
-export function buildSetupEmbed(setup: Setup, riskConfig?: RiskConfig) {
+export function buildSetupEmbed(
+  setup: Setup,
+  riskConfig?: RiskConfig,
+  fxRates?: Record<string, number> | null,
+) {
   const isLong = setup.direction === "long";
   const arrow = isLong ? "🟢" : "🔴";
   const dirText = isLong ? "LONG" : "SHORT";
@@ -190,12 +194,12 @@ export function buildSetupEmbed(setup: Setup, riskConfig?: RiskConfig) {
     ? `${regimeEmoji} ${setup.regime.toUpperCase()}${setup.regimeLabel ? ` · ${setup.regimeLabel}` : ""}`
     : "—";
 
-  // Risk sizing
+  // Risk sizing — use live FX rates for correct conversion on non-USD pairs
   const cfg = riskConfig ?? {
     accountBalance: parseFloat(process.env.ACCOUNT_BALANCE ?? "10000"),
     riskPerTrade: parseFloat(process.env.RISK_PER_TRADE ?? "0.01"),
   };
-  const posSize = computePositionSize(best, cfg);
+  const posSize = computePositionSize(best, cfg, { fxRates: fxRates ?? undefined });
 
   const fields = [
     { name: "Families Agreeing", value: familyBadges, inline: false },
@@ -469,9 +473,12 @@ export async function sendDiscordSummary(
 
 // ── Setup send functions (consolidated — one embed per setup) ────────────────
 
-export async function sendDiscordSetupAlert(setup: Setup, riskConfig?: RiskConfig): Promise<boolean> {
+export async function sendDiscordSetupAlert(
+  setup: Setup,
+  fxRates?: Record<string, number> | null,
+): Promise<boolean> {
   if (!WEBHOOK_URL) return false;
-  const embed = buildSetupEmbed(setup, riskConfig);
+  const embed = buildSetupEmbed(setup, undefined, fxRates);
   try {
     const res = await fetch(WEBHOOK_URL, {
       method: "POST",

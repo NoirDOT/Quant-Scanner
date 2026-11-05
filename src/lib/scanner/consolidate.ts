@@ -105,12 +105,18 @@ export function consolidate(
       if (families.length < minFamilies) { dropped++; continue; }
       if (rr < minRR) { dropped++; continue; }
 
-      // Stale check: if we have a live price and it's already run past the entry
-      // by more than 0.5×ATR, the setup is stale. (We approximate "ATR" using
-      // the distance from entry to stop, which is the risk leg.)
+      // Stale / stopped-out check: if we have a live price, drop setups where:
+      //   a) Price has already moved past the stop (the setup is already invalidated)
+      //   b) Price has moved too far past the entry in the profitable direction
+      //      (the entry opportunity is gone — we approximate "ATR" using the
+      //      risk leg, the distance from entry to stop)
       const live = livePrices[symbol];
       if (live != null && e != null && sl != null) {
         const risk = Math.abs(e - sl);
+        // (a) Already stopped out
+        if (dir === "long" && live <= sl) { dropped++; continue; }
+        if (dir === "short" && live >= sl) { dropped++; continue; }
+        // (b) Entry opportunity gone (moved too far in profit)
         const movePastEntry = dir === "long"
           ? Math.max(0, live - e)
           : Math.max(0, e - live);
