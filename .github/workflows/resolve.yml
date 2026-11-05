@@ -1,0 +1,46 @@
+# Quant Scanner — Forward-Test Resolver
+# ----------------------------------------------------------
+# Nightly job that replays subsequent candles for each unresolved
+# ForwardTestSignal to compute R multiples (win/loss/timeout).
+#
+# Runs once/day at 23:30 UTC (after the 21:05 scan finishes).
+# Takes ~60s for 200 signals.
+#
+# Manual trigger:
+#   GitHub repo → Actions tab → "Resolve Forward Tests" → Run workflow
+# ----------------------------------------------------------
+
+name: Resolve Forward Tests
+
+on:
+  schedule:
+    - cron: "30 23 * * *"
+
+  workflow_dispatch:
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Resolve forward-test signals
+        run: |
+          echo "=== Resolving forward-test signals at $(date -u) ==="
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.API_SECRET }}" \
+            "${{ vars.SCANNER_URL || 'https://quant-scanner-g7r7.vercel.app' }}/api/scanner/forward-tests/resolve?batch=200")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Resolve returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+          echo "=== Resolve complete ==="
