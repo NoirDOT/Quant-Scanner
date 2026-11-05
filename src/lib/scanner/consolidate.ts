@@ -56,6 +56,14 @@ export interface ConsolidateOptions {
   applyRegimeGate?: boolean;
   /** News blackout state — when active, affected setups are suppressed. */
   newsBlackout?: NewsBlackoutResult | null;
+  /** Per-symbol ADR (Average Daily Range) in price units, computed by runScan
+   *  from daily candles. Used for the ADR exhaustion gate: if price has already
+   *  moved more than `adrExhaustionThreshold` of the ADR today, the setup is
+   *  dropped (no more room to run). */
+  adrs?: Record<string, number>;
+  /** Fraction of ADR used above which a setup is considered exhausted.
+   *  Default 0.8 (80%). */
+  adrExhaustionThreshold?: number;
 }
 
 export function consolidate(
@@ -68,6 +76,8 @@ export function consolidate(
   const regimes = opts.regimes ?? {};
   const applyRegimeGate = opts.applyRegimeGate ?? true;
   const newsBlackout = opts.newsBlackout ?? null;
+  const adrs = opts.adrs ?? {};
+  const adrThreshold = opts.adrExhaustionThreshold ?? 0.8;
 
   // Group all signals by symbol
   const bySymbol = new Map<string, ScanSignal[]>();
@@ -121,6 +131,19 @@ export function consolidate(
           ? Math.max(0, live - e)
           : Math.max(0, e - live);
         if (movePastEntry > risk * (opts.maxStaleAtrMultiple ?? 0.5)) {
+          dropped++;
+          continue;
+        }
+      }
+
+      // ADR exhaustion gate: if price has already moved more than 80% of its
+      // average daily range today, the setup is exhausted — there's little room
+      // left for the target to be reached. Drop it.
+      const adr = adrs[symbol];
+      if (adr != null && adr > 0 && e != null && live != null) {
+        const dayMove = Math.abs(live - e); // approximate: distance from entry to current price
+        const adrUsedFraction = dayMove / adr;
+        if (adrUsedFraction > adrThreshold) {
           dropped++;
           continue;
         }

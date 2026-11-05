@@ -165,6 +165,9 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
   /** Per-symbol regime assessment, computed from the daily candle data.
    *  Used by consolidate() to gate counter-trend setups. */
   const regimes: Record<string, import("./regime").RegimeAssessment> = {};
+  /** Per-symbol ADR (Average Daily Range) in price units, computed from daily
+   *  candles. Used by consolidate() for the ADR exhaustion gate. */
+  const adrs: Record<string, number> = {};
   let anyLive = false;
   let instrumentsSkipped = 0;
 
@@ -194,6 +197,15 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
         } catch (err) {
           console.error(`[runScan] regime classify failed for ${inst.symbol}:`, err);
         }
+      }
+
+      // Compute ADR (Average Daily Range) from daily candles for the ADR
+      // exhaustion gate in consolidate(). ADR = average of (high - low) over
+      // the last 14 daily bars. Only compute once per symbol (on 1d TF).
+      if (adrs[inst.symbol] == null && tf === "1d" && candles.length >= 14) {
+        const last14 = candles.slice(-14);
+        const ranges = last14.map((c) => c.high - c.low);
+        adrs[inst.symbol] = ranges.reduce((a, b) => a + b, 0) / ranges.length;
       }
 
       symbolDataStatus.push({
@@ -282,15 +294,19 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
       const m2022 = await model2022Scanner(inst.symbol, inst.display, inst.assetClass, "1d", "4h", "1h");
       if (m2022) {
         // The 2022 model fetches its own data, so we don't have the bar time
-        // from the outer loop. Use the current time as a fallback for barCloseMs
-        // (killzone scoring will be approximately correct), and set barTime to
-        // the current bar's open time so cross-sweep dedupe works (otherwise
-        // it re-alerts every sweep when it's the best signal).
+        // from the outer loop. Floor the current time to the 4h bar boundary
+        // so the dedupe key is STABLE across sweeps within the same bar —
+        // otherwise Date.now() changes every sweep and the key never repeats,
+        // causing re-alerts every sweep + junk rows in ForwardTestSignal.
+        // (4h bars close at 01, 05, 09, 13, 17, 21 UTC with 21:00 alignment.)
         const nowSec = Math.floor(Date.now() / 1000);
+        const fourHours = 4 * 3600;
+        const barOpenSec = Math.floor(nowSec / fourHours) * fourHours;
+        const barCloseSec = barOpenSec + fourHours;
         m2022.metadata = {
           ...(m2022.metadata ?? {}),
-          barCloseMs: Date.now(),
-          barTime: nowSec,
+          barCloseMs: barCloseSec * 1000,
+          barTime: barOpenSec,
         };
         localSignals.push(m2022);
       }
@@ -391,6 +407,7 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
     livePrices,
     regimes,
     newsBlackout,
+    adrs,
   });
 
   // Persist ScanResult rows (best-effort) — one row per filtered signal.

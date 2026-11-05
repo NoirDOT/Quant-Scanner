@@ -125,10 +125,7 @@ export function middleware(req: NextRequest) {
   const adminSecrets = [process.env.API_SECRET, process.env.CRON_SECRET].filter(
     (s): s is string => typeof s === "string" && s.length > 0,
   );
-  const browserSecrets = [process.env.BROWSER_SECRET].filter(
-    (s): s is string => typeof s === "string" && s.length > 0,
-  );
-  const allSecrets = [...adminSecrets, ...browserSecrets];
+  const allSecrets = adminSecrets;
 
   // ── Fail-closed in production ───────────────────────────────────────────
   // If no secrets are configured in production, deny everything except the

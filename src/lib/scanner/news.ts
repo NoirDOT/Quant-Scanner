@@ -6,15 +6,15 @@
 // identifies when a blackout window is active and which currencies are
 // affected, so consolidate() can flag/suppress setups.
 //
-// Uses a hardcoded schedule of recurring events (no external API needed):
-//   - NFP: first Friday of every month, 13:30 UTC
-//   - CPI: monthly, around the 10th-13th (approximate — varies)
-//   - FOMC: 8 meetings/year (we approximate as every 6 weeks, Wed)
-//   - ECB: 8 meetings/year (approximate)
-//   - BoE: 8 meetings/year (approximate)
+// SCHEDULE ACCURACY: the recurring rules below are APPROXIMATE — FOMC doesn't
+// meet on a fixed weekday, CPI isn't always on the 13th, BoE doesn't meet
+// monthly. For exact dates, set the NEWS_BLACKOUT_OVERRIDE env var with the
+// published calendar dates (see below). The recurring schedule is a fallback
+// that catches most events most of the time.
 //
-// Override via NEWS_BLACKOUT_OVERRIDE env var for custom events:
-//   "USD:2026-11-05T13:30:00Z:60, EUR:2026-11-07T12:45:00Z:60"
+// Override via NEWS_BLACKOUT_OVERRIDE env var (JSON array — NOT colon-split,
+// which broke on ISO timestamps):
+//   NEWS_BLACKOUT_OVERRIDE='[{"name":"FOMC","currencies":["USD"],"startTime":"2026-10-28T18:00:00Z","blackoutMinutes":120},{"name":"CPI","currencies":["USD"],"startTime":"2026-11-13T13:30:00Z","blackoutMinutes":60}]'
 
 export interface NewsEvent {
   name: string;

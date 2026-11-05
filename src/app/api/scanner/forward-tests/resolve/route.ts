@@ -84,10 +84,16 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // Iterate through available bars after the signal. If stop/target hits,
-      // resolve immediately. If neither hits AND we haven't seen maxBars yet,
-      // leave the signal unresolved — a future run will pick it up.
-      for (let i = 0; i < after.length; i++) {
+      // Iterate through available bars after the signal. If stop/target hits
+      // within the maxBars window, resolve immediately. If neither hits AND
+      // we haven't seen maxBars yet, leave the signal unresolved — a future
+      // run will pick it up. If we've seen maxBars with no hit, declare timeout.
+      //
+      // IMPORTANT: the loop is capped at Math.min(after.length, maxBars) so a
+      // hit on bar 80 (when maxBars=50) is NOT recorded as a win — the trade
+      // would have timed out before the target was reached.
+      const loopLimit = Math.min(after.length, maxBars);
+      for (let i = 0; i < loopLimit; i++) {
         const c = after[i];
         barsToExit = i + 1;
         if (sig.direction === "long") {

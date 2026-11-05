@@ -116,6 +116,9 @@ function getSpec(symbol: string, assetClass: string): InstrumentSpec {
 
 /**
  * Convert a quote currency amount to USD using live FX rates.
+ * Returns null when the rate is missing — callers should treat a null return
+ * as "can't size this trade safely" rather than silently using the wrong size.
+ *
  * `fxRates` is a map of quote currency → USD price of 1 unit.
  * e.g. { "JPY": 0.0067, "GBP": 1.27, "EUR": 1.08 }
  */
@@ -123,11 +126,11 @@ function quoteToUSD(
   amount: number,
   quoteCurrency: string,
   fxRates?: Record<string, number>,
-): number {
+): number | null {
   if (quoteCurrency === "USD") return amount;
-  if (!fxRates) return amount; // best-effort fallback
+  if (!fxRates) return null; // can't convert — signal "unknown size"
   const rate = fxRates[quoteCurrency];
-  if (!rate || !Number.isFinite(rate) || rate <= 0) return amount;
+  if (!rate || !Number.isFinite(rate) || rate <= 0) return null;
   return amount * rate;
 }
 
@@ -161,8 +164,13 @@ export function computePositionSize(
   const spec = getSpec(signal.symbol, signal.assetClass);
   const fxRates = opts.fxRates ?? undefined;
 
-  // Per-lot USD value of a 1.0 price move
-  const usdPerPointPerLot = spec.contractSize * quoteToUSD(1, spec.quoteCurrency, fxRates);
+  // Per-lot USD value of a 1.0 price move. Returns null if the FX rate
+  // for the quote currency is missing (e.g. an EUR/GBP-only scan won't
+  // have USD/GBP or USD/EUR rates). In that case we return null rather
+  // than silently returning the wrong size.
+  const converted = quoteToUSD(1, spec.quoteCurrency, fxRates);
+  if (converted === null) return null;
+  const usdPerPointPerLot = spec.contractSize * converted;
   if (usdPerPointPerLot <= 0) return null;
 
   const pipValuePerLot = spec.pipSize * usdPerPointPerLot;

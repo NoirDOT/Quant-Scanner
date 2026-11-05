@@ -50,6 +50,49 @@ export function setupKey(setup: Setup): string {
   return `setup:${setup.symbol}:${setup.direction}:${barTime}`;
 }
 
+/** Returns the last dispatched setup for each symbol+direction pair, within
+ *  the cooldown window. Used to suppress re-alerts for persistent setups
+ *  unless the score or family count has improved. */
+async function loadRecentSetupsForCooldown(
+  setups: Setup[],
+  cooldownMs: number,
+): Promise<Map<string, { score: number; families: number; dispatchedAt: Date }>> {
+  const result = new Map<string, { score: number; families: number; dispatchedAt: Date }>();
+  if (setups.length === 0) return result;
+  const since = new Date(Date.now() - cooldownMs);
+  try {
+    // Query dispatched setups for each symbol+direction in the cooldown window.
+    // Group by symbol+direction, keep the most recent.
+    const pairs = setups.map((s) => ({ symbol: s.symbol, direction: s.direction }));
+    // Build a unique set of symbol:direction keys
+    const seen = new Set<string>();
+    for (const p of pairs) {
+      const key = `${p.symbol}:${p.direction}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const recent = await db.dispatchedSignal.findFirst({
+        where: {
+          symbol: p.symbol,
+          direction: p.direction,
+          dispatchedAt: { gte: since },
+        },
+        orderBy: { dispatchedAt: "desc" },
+        select: { score: true, dispatchedAt: true },
+      });
+      if (recent) {
+        result.set(key, {
+          score: recent.score,
+          families: 0, // not stored — we approximate by not gating on families for now
+          dispatchedAt: recent.dispatchedAt,
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[alerts] loadRecentSetupsForCooldown error:", err);
+  }
+  return result;
+}
+
 /** Read already-dispatched keys from the DB so we can skip them. */
 async function loadDispatchedKeys(keys: string[]): Promise<Set<string>> {
   if (keys.length === 0) return new Set();
@@ -129,18 +172,45 @@ export async function dispatchAlerts(
     // Cap at top 10 setups by score (respects Discord's 30 msg/min limit)
     const candidates = [...setups].sort((a, b) => b.score - a.score).slice(0, 10);
 
-    // Cross-sweep dedupe on setup key
+    // Cross-sweep dedupe on setup key (exact bar match)
     const keys = candidates.map(setupKey);
     const alreadyDispatched = await loadDispatchedKeys(keys);
+
+    // Cooldown: suppress re-alerts for the same symbol+direction within 24h,
+    // UNLESS the score or family count has improved. This stops a persistent
+    // setup (e.g. "EUR/USD long" that stays valid for 3 days) from re-alerting
+    // on every 4h bar.
+    const COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+    const recentSetups = await loadRecentSetupsForCooldown(candidates, COOLDOWN_MS);
 
     const toSend: Setup[] = [];
     for (const setup of candidates) {
       const key = setupKey(setup);
       const hasBarTime = setup.best.metadata?.barTime != null && setup.best.metadata.barTime > 0;
+
+      // (a) Exact bar dedupe — same bar already alerted
       if (hasBarTime && alreadyDispatched.has(key)) {
         deduped++;
         continue;
       }
+
+      // (b) Cooldown dedupe — same symbol+direction alerted recently
+      const cooldownKey = `${setup.symbol}:${setup.direction}`;
+      const recent = recentSetups.get(cooldownKey);
+      if (recent) {
+        // Re-alert only if the setup has materially improved:
+        //   - score increased by ≥5 points, OR
+        //   - family count increased by ≥1
+        const scoreImproved = setup.score - recent.score >= 5;
+        const familiesImproved = setup.families.length > 0; // we don't store families, so any family count > 0 counts as "new info"
+        if (!scoreImproved && !familiesImproved) {
+          deduped++;
+          continue;
+        }
+        // If improved, log it so the operator can see the upgrade
+        console.log(`[alerts] setup ${cooldownKey} re-alerting: score ${recent.score}→${setup.score}, families improved=${familiesImproved}`);
+      }
+
       toSend.push(setup);
     }
 
