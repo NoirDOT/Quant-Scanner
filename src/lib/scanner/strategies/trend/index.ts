@@ -4,6 +4,7 @@
 
 import type { StrategyContext, ScanSignal, ScannerFn, StrategyInfo } from "../../types";
 import {
+  ema,
   stackedEma,
   macd,
   adx,
@@ -16,6 +17,7 @@ import {
   donchianFromCloses,
 } from "../../indicators";
 import { getIndicatorCache } from "../../indicatorCache";
+import { findSwingPoints } from "../../ict/structure";
 
 export const TREND_STRATEGIES: StrategyInfo[] = [
   { key: "trend-ema", type: "trend", label: "EMA Stack (8/21/50/200)", description: "Bullish/bearish stacked EMAs with price above/below all", timeframes: ["1h", "2h", "4h", "1d", "1w"] },
@@ -24,6 +26,9 @@ export const TREND_STRATEGIES: StrategyInfo[] = [
   { key: "trend-ichimoku", type: "trend", label: "Ichimoku Cloud", description: "Tenkan/Kijun cross + price on correct side of cloud", timeframes: ["1h", "2h", "4h", "1d", "1w"] },
   { key: "trend-heikin-ashi", type: "trend", label: "Heikin-Ashi Trend", description: "3 consecutive HA candles with no opposite wick", timeframes: ["1h", "2h", "4h", "1d", "1w"] },
   { key: "trend-donchian", type: "trend", label: "Donchian Breakout", description: "20-period Donchian channel breakout with confirmation", timeframes: ["1h", "2h", "4h", "1d", "1w"] },
+  { key: "trend-following", type: "trend", label: "Trend Following", description: "Multi-EMA momentum system: EMA 21>50>200 aligned + ADX>20 + MACD confirms + pullback entry", timeframes: ["4h", "1d", "1w"] },
+  { key: "trend-buy-hold", type: "trend", label: "Buy & Hold Accumulation", description: "Long-term uptrend filter: above 200 EMA + positive 50-bar momentum + volume rising. Wide stop, no fixed target.", timeframes: ["1d", "1w"] },
+  { key: "trend-trendline", type: "trend", label: "Trendline Break", description: "Swing-based trendline: breaks above descending TL (long) or below ascending TL (short). Entry on break, stop at TL.", timeframes: ["1h", "2h", "4h", "1d"] },
 ];
 
 // === EMA Stack ===
@@ -461,6 +466,378 @@ export const donchianBreakoutScanner: ScannerFn = (ctx) => {
   });
 };
 
+// === Trendline Break ===
+// Uses swing points to draw a trendline, signals on break.
+
+// ─── Trend Following (momentum + pullback) ──────────────────────────────────
+// A classic trend-following system: EMA 21 > 50 > 200 aligned (bull) or
+// 21 < 50 < 200 aligned (bear), ADX > 20 confirms trend strength, MACD
+// histogram confirms direction, entry on pullback to EMA21, stop below
+// EMA50, target at 2R.
+export const trendFollowingScanner: ScannerFn = (ctx) => {
+  const { candles, symbol, display, assetClass, timeframe } = ctx;
+  if (candles.length < 200) return Promise.resolve(null);
+  const closes = candles.map((c) => c.close);
+  const highs = candles.map((c) => c.high);
+  const lows = candles.map((c) => c.low);
+  const cache = getIndicatorCache();
+  const ema21Arr = cache ? cache.getEma(symbol, timeframe, candles, 21) : ema(closes, 21);
+  const ema50Arr = cache ? cache.getEma(symbol, timeframe, candles, 50) : ema(closes, 50);
+  const ema200Arr = cache ? cache.getEma(symbol, timeframe, candles, 200) : ema(closes, 200);
+  const adxArr = cache ? cache.getAdx(symbol, timeframe, candles) : adx(highs, lows, closes);
+  const macdStates = cache ? cache.getMacd(symbol, timeframe, candles) : macd(closes);
+  const rsiArr = cache ? cache.getRsi(symbol, timeframe, candles) : rsi(closes, 14);
+
+  const last = closes.length - 1;
+  const e21 = ema21Arr[last];
+  const e50 = ema50Arr[last];
+  const e200 = ema200Arr[last];
+  const lastAdx = adxArr[last];
+  const lastMacd = macdStates[last];
+  const lastRsi = rsiArr[last];
+  if (!e21 || !e50 || !e200 || !lastAdx || !lastMacd) return Promise.resolve(null);
+
+  const lastClose = closes[last];
+  const reasons: string[] = [];
+  let score = 0;
+  let direction: "long" | "short" | "neutral" = "neutral";
+
+  // Bullish trend: EMA 21 > 50 > 200
+  if (e21 > e50 && e50 > e200) {
+    direction = "long";
+    score += 30;
+    reasons.push("EMA 21 > 50 > 200 (bullish trend alignment)");
+
+    // ADX confirms trend strength
+    if (lastAdx.adx > 25) {
+      score += 20;
+      reasons.push(`ADX ${lastAdx.adx.toFixed(0)} (strong trend)`);
+    } else if (lastAdx.adx > 20) {
+      score += 10;
+      reasons.push(`ADX ${lastAdx.adx.toFixed(0)} (developing trend)`);
+    } else {
+      score -= 10;
+      reasons.push(`ADX ${lastAdx.adx.toFixed(0)} (weak — trend may be fading)`);
+    }
+
+    // MACD confirms direction
+    if (lastMacd.histogram > 0) {
+      score += 15;
+      reasons.push("MACD histogram positive (momentum confirms)");
+    } else {
+      score -= 10;
+      reasons.push("MACD histogram negative (momentum diverges)");
+    }
+
+    // Pullback entry: price near EMA21 (within 1 ATR)
+    const dist = (lastClose - e21) / e21;
+    if (Math.abs(dist) < 0.005) {
+      score += 20;
+      reasons.push("Price near EMA21 (pullback entry zone)");
+    } else if (lastClose > e21) {
+      score += 5;
+      reasons.push("Price above EMA21 (trend continuation)");
+    }
+
+    // RSI not overbought
+    if (lastRsi != null && lastRsi < 70) {
+      score += 10;
+      reasons.push(`RSI ${lastRsi.toFixed(0)} (room to run)`);
+    } else if (lastRsi != null && lastRsi >= 70) {
+      score -= 10;
+      reasons.push(`RSI ${lastRsi.toFixed(0)} (overbought — wait for pullback)`);
+    }
+  }
+  // Bearish trend: EMA 21 < 50 < 200
+  else if (e21 < e50 && e50 < e200) {
+    direction = "short";
+    score += 30;
+    reasons.push("EMA 21 < 50 < 200 (bearish trend alignment)");
+
+    if (lastAdx.adx > 25) {
+      score += 20;
+      reasons.push(`ADX ${lastAdx.adx.toFixed(0)} (strong trend)`);
+    } else if (lastAdx.adx > 20) {
+      score += 10;
+      reasons.push(`ADX ${lastAdx.adx.toFixed(0)} (developing trend)`);
+    }
+
+    if (lastMacd.histogram < 0) {
+      score += 15;
+      reasons.push("MACD histogram negative (momentum confirms)");
+    }
+
+    const dist = (lastClose - e21) / e21;
+    if (Math.abs(dist) < 0.005) {
+      score += 20;
+      reasons.push("Price near EMA21 (pullback entry zone)");
+    }
+
+    if (lastRsi != null && lastRsi > 30) {
+      score += 10;
+      reasons.push(`RSI ${lastRsi.toFixed(0)} (room to fall)`);
+    }
+  }
+
+  score = Math.min(100, Math.max(0, score));
+  if (score < 50) return Promise.resolve(null);
+
+  const entry = lastClose;
+  const stop = direction === "long"
+    ? e50 * 0.995  // stop below EMA50
+    : e50 * 1.005;
+  const risk = Math.abs(entry - stop);
+  const target = direction === "long" ? entry + 2 * risk : entry - 2 * risk;
+
+  return Promise.resolve({
+    strategyKey: `trend-following-${timeframe}`,
+    strategyType: "trend",
+    strategyLabel: `Trend Following · ${timeframe.toUpperCase()}`,
+    symbol, display, assetClass, timeframe,
+    direction,
+    score,
+    reasons,
+    entryPrice: entry,
+    stopPrice: stop,
+    targetPrice: target,
+    metadata: { ema21: e21, ema50: e50, ema200: e200, adx: lastAdx.adx, macdHist: lastMacd.histogram, rsi: lastRsi },
+  });
+};
+
+// ─── Buy & Hold Accumulation ────────────────────────────────────────────────
+// Long-term accumulation signal: identifies instruments in a sustained
+// uptrend (above 200 EMA, positive 50-bar momentum, volume rising) and
+// signals "accumulate" (long). Wide stop below 200 EMA, no fixed target —
+// this is a position-building signal, not a quick trade.
+export const buyHoldScanner: ScannerFn = (ctx) => {
+  const { candles, symbol, display, assetClass, timeframe } = ctx;
+  if (candles.length < 200) return Promise.resolve(null);
+  const closes = candles.map((c) => c.close);
+  const highs = candles.map((c) => c.high);
+  const lows = candles.map((c) => c.low);
+  const cache = getIndicatorCache();
+  const ema50Arr = cache ? cache.getEma(symbol, timeframe, candles, 50) : ema(closes, 50);
+  const ema200Arr = cache ? cache.getEma(symbol, timeframe, candles, 200) : ema(closes, 200);
+  const adxArr = cache ? cache.getAdx(symbol, timeframe, candles) : adx(highs, lows, closes);
+
+  const last = closes.length - 1;
+  const e50 = ema50Arr[last];
+  const e200 = ema200Arr[last];
+  const lastAdx = adxArr[last];
+  if (!e50 || !e200 || !lastAdx) return Promise.resolve(null);
+
+  const lastClose = closes[last];
+  const reasons: string[] = [];
+  let score = 0;
+
+  // Must be above 200 EMA (long-term uptrend)
+  if (lastClose <= e200) return Promise.resolve(null);
+  score += 30;
+  reasons.push("Price above 200 EMA (long-term uptrend intact)");
+
+  // EMA 50 above 200 (golden cross structure)
+  if (e50 > e200) {
+    score += 20;
+    reasons.push("EMA 50 > 200 (golden cross — bullish structure)");
+  }
+
+  // Positive 50-bar momentum (price higher than 50 bars ago)
+  const momentumBar = Math.max(0, last - 50);
+  const momentum = (lastClose - closes[momentumBar]) / closes[momentumBar];
+  if (momentum > 0.02) {
+    score += 15;
+    reasons.push(`+${(momentum * 100).toFixed(1)}% over 50 bars (positive momentum)`);
+  } else if (momentum > 0) {
+    score += 5;
+    reasons.push(`+${(momentum * 100).toFixed(1)}% over 50 bars (slight positive)`);
+  } else {
+    score -= 10;
+    reasons.push(`${(momentum * 100).toFixed(1)}% over 50 bars (momentum fading)`);
+  }
+
+  // ADX > 20 (trend exists)
+  if (lastAdx.adx > 25) {
+    score += 15;
+    reasons.push(`ADX ${lastAdx.adx.toFixed(0)} (strong trend)`);
+  } else if (lastAdx.adx > 20) {
+    score += 10;
+    reasons.push(`ADX ${lastAdx.adx.toFixed(0)} (trend developing)`);
+  }
+
+  // Volume rising (last 10 bars avg > last 50 bars avg)
+  const last10Vol = candles.slice(-10).reduce((s, c) => s + c.volume, 0) / 10;
+  const last50Vol = candles.slice(-50).reduce((s, c) => s + c.volume, 0) / 50;
+  if (last50Vol > 0 && last10Vol > last50Vol * 1.1) {
+    score += 10;
+    reasons.push("Volume rising (accumulation in progress)");
+  }
+
+  // RSI not overbought (room to accumulate)
+  const rsiArr = cache ? cache.getRsi(symbol, timeframe, candles) : rsi(closes, 14);
+  const lastRsi = rsiArr[last];
+  if (lastRsi != null && lastRsi < 70) {
+    score += 10;
+    reasons.push(`RSI ${lastRsi.toFixed(0)} (not overbought — accumulation zone)`);
+  } else if (lastRsi != null) {
+    score -= 5;
+    reasons.push(`RSI ${lastRsi.toFixed(0)} (overbought — wait for pullback)`);
+  }
+
+  score = Math.min(100, Math.max(0, score));
+  if (score < 50) return Promise.resolve(null);
+
+  // Buy & hold: wide stop below 200 EMA (5% buffer), no fixed target
+  // (target = entry + 10R as a placeholder — this is a "hold" signal)
+  const entry = lastClose;
+  const stop = e200 * 0.95; // 5% below 200 EMA
+  const risk = Math.abs(entry - stop);
+  const target = entry + 10 * risk; // 10R target (long-term hold)
+
+  return Promise.resolve({
+    strategyKey: `trend-buy-hold-${timeframe}`,
+    strategyType: "trend",
+    strategyLabel: `Buy & Hold · ${timeframe.toUpperCase()}`,
+    symbol, display, assetClass, timeframe,
+    direction: "long",
+    score,
+    reasons,
+    entryPrice: entry,
+    stopPrice: stop,
+    targetPrice: target,
+    metadata: {
+      ema50: e50, ema200: e200, adx: lastAdx.adx, rsi: lastRsi,
+      momentum50: momentum, volTrend: last10Vol / (last50Vol || 1),
+      type: "accumulation", // signals to the UI this is a long-term hold
+    },
+  });
+};
+
+// ─── Trendline Break ────────────────────────────────────────────────────────
+// Uses swing points to draw a trendline between the last 2-3 swing highs
+// (for descending TL) or swing lows (for ascending TL). Signals when price
+// breaks through the trendline. Entry on break, stop at the TL, target at 2R.
+export const trendlineBreakScanner: ScannerFn = (ctx) => {
+  const { candles, symbol, display, assetClass, timeframe } = ctx;
+  if (candles.length < 50) return Promise.resolve(null);
+
+  // Find swing points (lookback=2 for sensitivity)
+  const swings = findSwingPoints(candles, 2);
+  if (swings.length < 4) return Promise.resolve(null); // need at least 2 highs + 2 lows
+
+  const lastClose = candles[candles.length - 1].close;
+  const lastIdx = candles.length - 1;
+
+  // Get the last 2-3 swing highs and lows
+  const swingHighs = swings.filter((s) => s.type === "high").slice(-3);
+  const swingLows = swings.filter((s) => s.type === "low").slice(-3);
+
+  const reasons: string[] = [];
+  let score = 0;
+  let direction: "long" | "short" | "neutral" = "neutral";
+  let trendlinePrice = 0;
+
+  // Check for descending trendline (lower highs) → long on break above
+  if (swingHighs.length >= 2) {
+    const h1 = swingHighs[swingHighs.length - 2];
+    const h2 = swingHighs[swingHighs.length - 1];
+    // Descending: h2.price < h1.price
+    if (h2.price < h1.price) {
+      // Extrapolate the trendline to the current bar
+      const barsBetween = lastIdx - h1.index;
+      const slope = (h2.price - h1.price) / (h2.index - h1.index);
+      trendlinePrice = h1.price + slope * barsBetween;
+
+      // Price broke above the trendline this bar?
+      if (lastClose > trendlinePrice && candles[candles.length - 2].close <= trendlinePrice) {
+        direction = "long";
+        score += 40;
+        reasons.push("Broke above descending trendline (bearish trend broken)");
+        reasons.push(`Trendline at ${trendlinePrice.toFixed(5)}, close ${lastClose.toFixed(5)}`);
+
+        // Confirm with volume
+        const vol = candles[lastIdx].volume;
+        const avgVol = candles.slice(-21, -1).reduce((s, c) => s + c.volume, 0) / 20;
+        if (vol > avgVol * 1.3 && vol > 0) {
+          score += 20;
+          reasons.push("Volume spike on breakout (+30% above average)");
+        }
+
+        // Check if there's a prior swing low for stop placement
+        if (swingLows.length >= 1) {
+          const lastLow = swingLows[swingLows.length - 1];
+          if (lastLow.price < lastClose) {
+            score += 10;
+            reasons.push("Prior swing low below for stop placement");
+          }
+        }
+      }
+    }
+  }
+
+  // Check for ascending trendline (higher lows) → short on break below
+  if (direction === "neutral" && swingLows.length >= 2) {
+    const l1 = swingLows[swingLows.length - 2];
+    const l2 = swingLows[swingLows.length - 1];
+    // Ascending: l2.price > l1.price
+    if (l2.price > l1.price) {
+      const barsBetween = lastIdx - l1.index;
+      const slope = (l2.price - l1.price) / (l2.index - l1.index);
+      trendlinePrice = l1.price + slope * barsBetween;
+
+      // Price broke below the trendline this bar?
+      if (lastClose < trendlinePrice && candles[candles.length - 2].close >= trendlinePrice) {
+        direction = "short";
+        score += 40;
+        reasons.push("Broke below ascending trendline (bullish trend broken)");
+        reasons.push(`Trendline at ${trendlinePrice.toFixed(5)}, close ${lastClose.toFixed(5)}`);
+
+        const vol = candles[lastIdx].volume;
+        const avgVol = candles.slice(-21, -1).reduce((s, c) => s + c.volume, 0) / 20;
+        if (vol > avgVol * 1.3 && vol > 0) {
+          score += 20;
+          reasons.push("Volume spike on breakdown (+30% above average)");
+        }
+
+        if (swingHighs.length >= 1) {
+          const lastHigh = swingHighs[swingHighs.length - 1];
+          if (lastHigh.price > lastClose) {
+            score += 10;
+            reasons.push("Prior swing high above for stop placement");
+          }
+        }
+      }
+    }
+  }
+
+  score = Math.min(100, Math.max(0, score));
+  if (score < 50 || direction === "neutral") return Promise.resolve(null);
+
+  const entry = lastClose;
+  // Stop at the trendline (if it breaks back, the trade is invalid)
+  const stop = trendlinePrice;
+  const risk = Math.abs(entry - stop);
+  if (risk <= 0) return Promise.resolve(null);
+  const target = direction === "long" ? entry + 2 * risk : entry - 2 * risk;
+
+  return Promise.resolve({
+    strategyKey: `trend-trendline-${timeframe}`,
+    strategyType: "trend",
+    strategyLabel: `Trendline Break · ${timeframe.toUpperCase()}`,
+    symbol, display, assetClass, timeframe,
+    direction,
+    score,
+    reasons,
+    entryPrice: entry,
+    stopPrice: stop,
+    targetPrice: target,
+    metadata: {
+      trendlinePrice,
+      swingHighs: swingHighs.map((s) => s.price),
+      swingLows: swingLows.map((s) => s.price),
+    },
+  });
+};
+
 export const TREND_SCANNERS: Record<string, ScannerFn> = {
   "trend-ema": emaStackScanner,
   "trend-supertrend-psar": supertrendPsarScanner,
@@ -468,6 +845,9 @@ export const TREND_SCANNERS: Record<string, ScannerFn> = {
   "trend-ichimoku": ichimokuScanner,
   "trend-heikin-ashi": heikinAshiScanner,
   "trend-donchian": donchianBreakoutScanner,
+  "trend-following": trendFollowingScanner,
+  "trend-buy-hold": buyHoldScanner,
+  "trend-trendline": trendlineBreakScanner,
 };
 
 export async function runTrendScan(
