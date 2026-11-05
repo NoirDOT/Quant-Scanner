@@ -131,11 +131,9 @@ export const INSTRUMENTS: Instrument[] = [
   { symbol: "SNE", display: "Sony", assetClass: "stock", category: "Tech" },
   // ===== USER CSV-PROVIDED INSTRUMENTS (15y history available) =====
   { symbol: "XAUUSD=X", display: "XAU/USD (Gold)", assetClass: "commodity", category: "Metals" },
-  { symbol: "US30=F", display: "US30 / Dow Jones", assetClass: "index", category: "US" },
-  { symbol: "US500=F", display: "US500 / S&P 500", assetClass: "index", category: "US" },
-  { symbol: "USTEC=F", display: "USTEC / Nasdaq 100", assetClass: "index", category: "US" },
-  { symbol: "JP225=F", display: "JP225 / Nikkei 225", assetClass: "index", category: "Asia" },
-  { symbol: "CA60=F", display: "CA60 / TSX 60", assetClass: "index", category: "Canada" },
+  // NOTE: US30=F, US500=F, USTEC=F, JP225=F, CA60=F removed — Yahoo Finance
+  // doesn't serve these futures symbols. Use the ^ index symbols instead
+  // (^DJI, ^GSPC, ^NDX, ^N225) which are already in the list above.
 ];
 
 export const TIMEFRAMES = ["1h", "2h", "4h", "1d", "1w"] as const;

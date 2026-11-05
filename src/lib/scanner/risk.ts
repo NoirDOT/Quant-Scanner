@@ -88,14 +88,11 @@ const INSTRUMENT_SPECS: Record<string, InstrumentSpec> = {
   "XRP-USD": { contractSize: 1, pipSize: 0.0001, quoteCurrency: "USD" },
   "DOGE-USD": { contractSize: 1, pipSize: 0.00001, quoteCurrency: "USD" },
 
-  // Indices — 1 contract = $1 per point
+  // Indices — 1 contract = $1 per point (use ^ symbols, not =F futures)
   "^GSPC":   { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
   "^NDX":    { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
   "^DJI":    { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
   "^RUT":    { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
-  "US500=F": { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
-  "USTEC=F": { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
-  "US30=F":  { contractSize: 1, pipSize: 0.01, quoteCurrency: "USD" },
 };
 
 /** Get the instrument spec, falling back to a generic forex default. */

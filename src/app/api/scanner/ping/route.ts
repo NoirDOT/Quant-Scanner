@@ -193,8 +193,8 @@ export async function GET(req: NextRequest) {
         "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "DOGE-USD",
         // Commodities (3)
         "GC=F", "SI=F", "CL=F",
-        // Indices (5)
-        "^GSPC", "^NDX", "^DJI", "US500=F", "USTEC=F",
+        // Indices (3) — use ^ index symbols, not =F futures (Yahoo doesn't serve them)
+        "^GSPC", "^NDX", "^DJI",
       ],
       timeframes: ["4h", "1d"],
       minScore: 30,

@@ -70,9 +70,6 @@ function tradingViewSymbol(yahooSymbol: string, assetClass: string): string {
       "^NDX": "NASDAQ:NDX",
       "^DJI": "DJI:DJI",
       "^RUT": "I:RUT",
-      "US500=F": "SP:SPX",
-      "USTEC=F": "NASDAQ:NDX",
-      "US30=F": "DJI:DJI",
     };
     return map[yahooSymbol] ?? yahooSymbol;
   }
