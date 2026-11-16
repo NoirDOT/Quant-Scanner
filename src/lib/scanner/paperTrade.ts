@@ -93,6 +93,22 @@ export async function openPaperTrade(
     return { opened: false, error: "Trade already exists for this setup" };
   }
 
+  // Daily trade cap — stop opening new paper trades once MAX_PAPER_TRADES_PER_DAY
+  // is reached (default 4). Prevents over-trading when many setups dispatch in a
+  // day (the broken cooldown previously let the same pair re-fire every sweep,
+  // opening 20-40+ trades/day). Set to 0 to disable the cap.
+  const maxPerDay = parseInt(process.env.MAX_PAPER_TRADES_PER_DAY ?? "4", 10);
+  if (maxPerDay > 0) {
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+    const todayCount = await db.paperTrade.count({
+      where: { openedAt: { gte: todayStart } },
+    }).catch(() => 0);
+    if (todayCount >= maxPerDay) {
+      return { opened: false, error: `Daily cap reached (${todayCount}/${maxPerDay})` };
+    }
+  }
+
   // Compute position size
   const cfg = getRiskConfig();
   const posSize = computePositionSize(best, cfg, { fxRates: fxRates ?? undefined });

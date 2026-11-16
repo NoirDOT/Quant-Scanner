@@ -98,8 +98,12 @@ export async function readCsvCandles(
     return cached.data;
   }
 
-  // Try each suffix variant
-  for (const suffix of TF_TO_SUFFIXES[tf]) {
+  // Try each suffix variant (guard against timeframes not in the CSV map,
+  // e.g. "15m"/"5m" used as LTF/MTF by some trader strategies — no CSV exists
+  // for those, so just return [] and let the caller fall back to live data).
+  const suffixes = TF_TO_SUFFIXES[tf];
+  if (!suffixes || suffixes.length === 0) return [];
+  for (const suffix of suffixes) {
     const filePath = path.join(/*turbopackIgnore: true*/ CSV_DIR, `${csvSymbol}${suffix}`);
     try {
       const stat = await fs.stat(/*turbopackIgnore: true*/ filePath);

@@ -199,17 +199,18 @@ export async function dispatchAlerts(
       const cooldownKey = `${setup.symbol}:${setup.direction}`;
       const recent = recentSetups.get(cooldownKey);
       if (recent) {
-        // Re-alert only if the setup has materially improved:
-        //   - score increased by ≥5 points, OR
-        //   - family count increased by ≥1
+        // Re-alert only if the setup has materially improved (score up ≥5).
+        // BUGFIX: previously this also checked `familiesImproved = setup.families.length > 0`,
+        // which is ALWAYS true (every consolidated setup has ≥1 family) — so the
+        // `if (!scoreImproved && !familiesImproved)` condition was never true and
+        // the 24h cooldown never suppressed anything. The same pair+direction
+        // re-fired every sweep (including weekends), opening duplicate paper trades.
         const scoreImproved = setup.score - recent.score >= 5;
-        const familiesImproved = setup.families.length > 0; // we don't store families, so any family count > 0 counts as "new info"
-        if (!scoreImproved && !familiesImproved) {
+        if (!scoreImproved) {
           deduped++;
           continue;
         }
-        // If improved, log it so the operator can see the upgrade
-        console.log(`[alerts] setup ${cooldownKey} re-alerting: score ${recent.score}→${setup.score}, families improved=${familiesImproved}`);
+        console.log(`[alerts] setup ${cooldownKey} re-alerting: score ${recent.score}→${setup.score} (improved ≥5)`);
       }
 
       toSend.push(setup);

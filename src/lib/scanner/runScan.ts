@@ -19,6 +19,7 @@ import {
   type Instrument,
 } from "./instruments";
 import { getCandlesLive, pLimit, type Candle } from "./data";
+import { isMarketOpen } from "./marketHours";
 import { anyFilterMatches } from "./filters";
 import { TREND_SCANNERS, TREND_STRATEGIES, runTrendScan } from "./strategies/trend";
 import { ICT_SCANNERS, ICT_STRATEGIES, runICTScan, model2022Scanner } from "./strategies/ict";
@@ -173,6 +174,19 @@ export async function runScan(opts: RunScanOptions = {}): Promise<RunScanResult>
   let instrumentsSkipped = 0;
 
   const scanInstrument = async (inst: Instrument) => {
+    // Market-hours gate: skip instruments whose market is currently closed
+    // (e.g. forex on weekends). Crypto is 24/7 so it's always scanned. This
+    // prevents stale-bar re-fires and weekend phantom alerts — the root cause
+    // of currency-pair alerts firing on Saturday/Sunday.
+    if (!isMarketOpen(inst.assetClass)) {
+      for (const tf of tfList) {
+        symbolDataStatus.push({
+          symbol: inst.symbol, timeframe: tf, candles: 0,
+          source: "market_closed", livePrice: null, lastBarTime: null,
+        });
+      }
+      return [];
+    }
     const localSignals: ScanSignal[] = [];
     for (const tf of tfList) {
       const result = await getCandlesLive(inst.symbol, tf);

@@ -106,9 +106,14 @@ async function rawYahooChart(
   return { candles: out, livePrice: r.meta?.regularMarketPrice ?? null };
 }
 
-// Map our timeframe + lookback to Yahoo raw interval/range params
-function rawParamsFor(tf: Timeframe): { interval: string; range: string } {
+// Map our timeframe + lookback to Yahoo raw interval/range params.
+// Accepts the canonical Timeframe set plus the sub-hour LTF/MTF strings
+// ("15m"/"5m"/"30m") that some trader strategies pass through as Timeframe.
+function rawParamsFor(tf: Timeframe | string): { interval: string; range: string } {
   switch (tf) {
+    case "15m": return { interval: "15m", range: "5d" };
+    case "5m":  return { interval: "5m",  range: "1d" };
+    case "30m": return { interval: "30m", range: "5d" };
     case "1h": return { interval: "1h", range: "60d" };
     case "2h": return { interval: "1h", range: "90d" };
     case "4h": return { interval: "1h", range: "90d" };
@@ -207,13 +212,17 @@ function aggregateTo2h(oneday: Candle[]): Candle[] {
 
 // ─── Drop the last (incomplete/forming) bar so strategies evaluate only ────
 // CLOSED candles — matches what the backtest engine sees.
-function barDurationSec(tf: Timeframe): number {
+function barDurationSec(tf: Timeframe | string): number {
   switch (tf) {
+    case "5m":  return 300;
+    case "15m": return 900;
+    case "30m": return 1800;
     case "1h": return 3600;
     case "2h": return 7200;
     case "4h": return 14400;
     case "1d": return 86400;
     case "1w": return 604800;
+    default:   return 3600;
   }
 }
 

@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { ScanSignal } from "@/lib/scanner/types";
 import { sendDiscordSummary, sendDiscordSetupDigest, buildSignalEmbed } from "@/lib/scanner/alerts/discord";
+import { deleteOldMessages } from "@/lib/scanner/bot";
 import { runScan } from "@/lib/scanner/runScan";
 
 export const dynamic = "force-dynamic";
@@ -230,6 +231,23 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    // ── Channel cleanup — delete signal messages older than 24h so the ───────
+    // Discord channel doesn't clutter. This runs on every scheduled sweep
+    // (the scan cron fires every 4h), so messages rarely accumulate past a
+    // day. Best-effort: errors don't fail the scan response. Silently
+    // no-ops if DISCORD_BOT_TOKEN / DISCORD_CHANNEL_ID aren't configured.
+    let cleanup: { deleted: number; total: number } | null = null;
+    if (process.env.DISCORD_BOT_TOKEN && process.env.DISCORD_CHANNEL_ID) {
+      try {
+        cleanup = await deleteOldMessages(24);
+        console.log(
+          `[ping] cleanup: deleted ${cleanup.deleted} old message(s) (of ${cleanup.total} fetched)`,
+        );
+      } catch (err) {
+        console.error("[ping] channel cleanup failed:", err);
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       alive: true,
@@ -242,6 +260,7 @@ export async function GET(req: NextRequest) {
       forwarded: result.meta.forwardSignalsWritten,
       failedSymbols: failedSymbols.length,
       staleSymbols: staleSymbols.length,
+      cleanup: cleanup ? { deleted: cleanup.deleted, total: cleanup.total } : null,
       durationMs: result.meta.duration,
     });
   } catch (e) {

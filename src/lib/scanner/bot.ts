@@ -98,23 +98,46 @@ export async function bulkDeleteMessages(messageIds: string[]): Promise<number> 
     if (res.ok) {
       deleted += chunk.length;
     } else if (res.status === 400) {
-      // Some messages are older than 14 days — delete them one at a time
+      // Some messages are older than 14 days (Discord's bulk-delete age limit)
+      // — delete them one at a time. Bots are rate-limited to 5 DELETEs/sec per
+      // channel, so we read the per-request Retry-After header and retry (up to
+      // 3 attempts) instead of silently skipping rate-limited deletes.
+      // BUGFIX: previously this read `res.headers` (the outer 400 response)
+      // instead of `singleRes.headers` (the actual 429), and never retried the
+      // delete — so old-message cleanup silently dropped rate-limited rows.
       console.log("[bot] bulk delete failed (messages too old), falling back to individual deletes");
       for (const id of chunk) {
-        const singleRes = await fetch(
-          `${API_BASE}/channels/${CHANNEL_ID}/messages/${id}`,
-          {
-            method: "DELETE",
-            headers: { Authorization: `Bot ${BOT_TOKEN}` },
-            signal: AbortSignal.timeout(5_000),
-          },
-        );
-        if (singleRes.ok) deleted++;
-        else if (singleRes.status === 429) {
-          // Rate limited — wait and retry
-          const retryAfter = parseFloat(res.headers.get("X-RateLimit-Reset-After") ?? "1");
-          await new Promise((r) => setTimeout(r, retryAfter * 1000));
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const singleRes = await fetch(
+            `${API_BASE}/channels/${CHANNEL_ID}/messages/${id}`,
+            {
+              method: "DELETE",
+              headers: { Authorization: `Bot ${BOT_TOKEN}` },
+              signal: AbortSignal.timeout(5_000),
+            },
+          );
+          if (singleRes.ok) {
+            deleted++;
+            break;
+          }
+          if (singleRes.status === 429) {
+            // Rate limited — wait Discord's told us, then retry THIS delete
+            const retryAfter = parseFloat(
+              singleRes.headers.get("X-RateLimit-Reset-After") ??
+              singleRes.headers.get("Retry-After") ??
+              "1",
+            );
+            await new Promise((r) => setTimeout(r, retryAfter * 1000));
+            continue;
+          }
+          // 403 (no perms) / 404 (already gone) — stop retrying this message
+          if (singleRes.status === 403) {
+            console.error(`[bot] delete ${id} forbidden (403) — check bot Manage Messages permission`);
+          }
+          break;
         }
+        // Pace individual deletes to stay under Discord's 5/s per-channel limit
+        await new Promise((r) => setTimeout(r, 250));
       }
     } else if (res.status === 429) {
       // Rate limited — wait and retry

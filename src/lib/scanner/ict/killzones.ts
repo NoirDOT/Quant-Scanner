@@ -2,6 +2,8 @@
 // ICT Killzones & Silver Bullet windows — expressed in EST (UTC-5)
 // Times are from ICT's documented windows
 
+import { isFxMarketOpen } from "../marketHours";
+
 export interface Killzone {
   name: string;
   startUTC: number;  // hours 0–23 UTC
@@ -73,6 +75,11 @@ export interface ActiveKillzone {
 }
 
 export function activeKillzones(date = new Date()): ActiveKillzone[] {
+  // ICT killzones are weekday FX sessions (Asian/London/NY). None are active
+  // when the FX market is closed (Saturday, or Sunday before 22:00 UTC).
+  // Previously this only checked the UTC hour, so a Saturday at 08:00 UTC
+  // falsely reported "London Killzone active" and inflated weekend grades.
+  if (!isFxMarketOpen(date)) return [];
   const utcHours = date.getUTCHours();
   const utcMin = date.getUTCMinutes();
   const utcTime = utcHours + utcMin / 60;
